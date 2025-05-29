@@ -10,6 +10,7 @@ import { env } from "@/src/env.mjs";
  * @returns {boolean}
  */
 
+// TODO: Can enable license key
 export const isEeEnabled =
   Boolean(env.NEXT_PUBLIC_LANGFUSE_CLOUD_REGION) ||
   Boolean(env.LANGFUSE_EE_LICENSE_KEY);

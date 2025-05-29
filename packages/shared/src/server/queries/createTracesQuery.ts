@@ -1,31 +1,31 @@
-import { Prisma } from "@prisma/client";
-import { TableFilters } from "./types";
+import { Prisma } from '@prisma/client';
+import { TableFilters } from './types';
 import {
   datetimeFilterToPrismaSql,
   tableColumnsToSqlFilterAndPrefix,
-} from "../filterToPrisma";
-import { tracesTableCols } from "../../tableDefinitions/tracesTable";
-import { orderByToPrismaSql } from "../orderByToPrisma";
+} from '../filterToPrisma';
+import { orderByToPrismaSql } from '../orderByToPrisma';
+import { tracesTableCols } from '../../tableDefinitions/tracesTable';
 
 export function parseTraceAllFilters(input: TableFilters) {
   const filterCondition = tableColumnsToSqlFilterAndPrefix(
     input.filter ?? [],
     tracesTableCols,
-    "traces"
+    'traces',
   );
   const orderByCondition = orderByToPrismaSql(input.orderBy, tracesTableCols);
 
   // to improve query performance, add timeseries filter to observation queries as well
   const timeseriesFilter = input.filter?.find(
-    (f) => f.column === "Timestamp" && f.type === "datetime"
+    (f) => f.column === 'Timestamp' && f.type === 'datetime',
   );
 
   const observationTimeseriesFilter =
-    timeseriesFilter && timeseriesFilter.type === "datetime"
+    timeseriesFilter && timeseriesFilter.type === 'datetime'
       ? datetimeFilterToPrismaSql(
-          "start_time",
+          'start_time',
           timeseriesFilter.operator,
-          timeseriesFilter.value
+          timeseriesFilter.value,
         )
       : Prisma.empty;
 

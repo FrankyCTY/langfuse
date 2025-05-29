@@ -1,9 +1,9 @@
-import lodash from "lodash";
-import { z } from "zod";
+import lodash from 'lodash';
+import { z } from 'zod';
 
-import { NonEmptyString, jsonSchema } from "../../utils/zod";
-import { ModelUsageUnit } from "../../constants";
-import { ObservationLevel } from "@prisma/client";
+import { NonEmptyString, jsonSchema } from '../../utils/zod';
+import { ModelUsageUnit } from '../../constants';
+import { ObservationLevel } from '@prisma/client';
 
 export const Usage = z.object({
   input: z.number().int().nullish(),
@@ -37,7 +37,7 @@ export const usage = MixedUsage.nullish()
       return null;
     }
     // if we get the openai format, we default to TOKENS unit
-    if ("promptTokens" in v || "completionTokens" in v || "totalTokens" in v) {
+    if ('promptTokens' in v || 'completionTokens' in v || 'totalTokens' in v) {
       return {
         input: v.promptTokens,
         output: v.completionTokens,
@@ -115,19 +115,25 @@ export const CreateGenerationBody = CreateSpanBody.extend({
           z.array(z.string()),
           z.record(z.string()),
         ])
-        .nullish(),
+        .nullish()
     )
     .nullish(),
   usage: usage,
   promptName: z.string().nullish(),
   promptVersion: z.number().int().nullish(),
-}).refine((value) => {
-  // ensure that either promptName and promptVersion are set, or none
+}).refine(
+  (value) => {
+    // ensure that either promptName and promptVersion are set, or none
 
-  if (!value.promptName && !value.promptVersion) return true;
-  if (value.promptName && value.promptVersion) return true;
-  return false;
-});
+    if (!value.promptName && !value.promptVersion) return true;
+    if (value.promptName && value.promptVersion) return true;
+    return false;
+  },
+  {
+    message:
+      "Either both 'promptName' and 'promptVersion' must be provided, or neither.",
+  }
+);
 
 export const UpdateGenerationBody = UpdateSpanBody.extend({
   completionStartTime: stringDateTime,
@@ -143,19 +149,25 @@ export const UpdateGenerationBody = UpdateSpanBody.extend({
           z.array(z.string()),
           z.record(z.string()),
         ])
-        .nullish(),
+        .nullish()
     )
     .nullish(),
   usage: usage,
   promptName: z.string().nullish(),
   promptVersion: z.number().int().nullish(),
-}).refine((value) => {
-  // ensure that either promptName and promptVersion are set, or none
+}).refine(
+  (value) => {
+    // ensure that either promptName and promptVersion are set, or none
 
-  if (!value.promptName && !value.promptVersion) return true;
-  if (value.promptName && value.promptVersion) return true;
-  return false;
-});
+    if (!value.promptName && !value.promptVersion) return true;
+    if (value.promptName && value.promptVersion) return true;
+    return false;
+  },
+  {
+    message:
+      "Either both 'promptName' and 'promptVersion' must be provided, or neither.",
+  }
+);
 
 const BaseScoreBody = z.object({
   id: z.string().nullish(),
@@ -168,37 +180,37 @@ const BaseScoreBody = z.object({
 /**
  * ScoreBody exactly mirrors `PostScoresBody` in the public API. Please refer there for source of truth.
  */
-export const ScoreBody = z.discriminatedUnion("dataType", [
+export const ScoreBody = z.discriminatedUnion('dataType', [
   BaseScoreBody.merge(
     z.object({
       value: z.number(),
-      dataType: z.literal("NUMERIC"),
+      dataType: z.literal('NUMERIC'),
       configId: z.string().nullish(),
-    }),
+    })
   ),
   BaseScoreBody.merge(
     z.object({
       value: z.string(),
-      dataType: z.literal("CATEGORICAL"),
+      dataType: z.literal('CATEGORICAL'),
       configId: z.string().nullish(),
-    }),
+    })
   ),
   BaseScoreBody.merge(
     z.object({
       value: z.number().refine((value) => value === 0 || value === 1, {
         message:
-          "Value must be a number equal to either 0 or 1 for data type BOOLEAN",
+          'Value must be a number equal to either 0 or 1 for data type BOOLEAN',
       }),
-      dataType: z.literal("BOOLEAN"),
+      dataType: z.literal('BOOLEAN'),
       configId: z.string().nullish(),
-    }),
+    })
   ),
   BaseScoreBody.merge(
     z.object({
       value: z.union([z.string(), z.number()]),
       dataType: z.undefined(),
       configId: z.string().nullish(),
-    }),
+    })
   ),
 ]);
 
@@ -243,7 +255,7 @@ export const LegacyGenerationsCreateSchema = z.object({
   modelParameters: z
     .record(
       z.string(),
-      z.union([z.string(), z.number(), z.boolean()]).nullish(),
+      z.union([z.string(), z.number(), z.boolean()]).nullish()
     )
     .nullish(),
   prompt: jsonSchema.nullish(),
@@ -267,7 +279,7 @@ export const LegacyGenerationPatchSchema = z.object({
   modelParameters: z
     .record(
       z.string(),
-      z.union([z.string(), z.number(), z.boolean()]).nullish(),
+      z.union([z.string(), z.number(), z.boolean()]).nullish()
     )
     .nullish(),
   prompt: jsonSchema.nullish(),
@@ -282,7 +294,7 @@ export const LegacyGenerationPatchSchema = z.object({
 export const LegacyObservationBody = z.object({
   id: z.string().nullish(),
   traceId: z.string().nullish(),
-  type: z.enum(["GENERATION", "SPAN", "EVENT"]),
+  type: z.enum(['GENERATION', 'SPAN', 'EVENT']),
   name: z.string().nullish(),
   startTime: stringDateTime,
   endTime: stringDateTime,
@@ -291,7 +303,7 @@ export const LegacyObservationBody = z.object({
   modelParameters: z
     .record(
       z.string(),
-      z.union([z.string(), z.number(), z.boolean()]).nullish(),
+      z.union([z.string(), z.number(), z.boolean()]).nullish()
     )
     .nullish(),
   input: jsonSchema.nullish(),
@@ -312,27 +324,27 @@ export const SdkLogEvent = z.object({
 // definitions for the ingestion API
 
 export const observationTypes = [
-  "observation-create",
-  "observation-update",
-  "generation-create",
-  "generation-update",
-  "span-create",
-  "span-update",
-  "event-create",
+  'observation-create',
+  'observation-update',
+  'generation-create',
+  'generation-update',
+  'span-create',
+  'span-update',
+  'event-create',
 ];
 
 export const eventTypes = {
-  TRACE_CREATE: "trace-create",
-  SCORE_CREATE: "score-create",
-  EVENT_CREATE: "event-create",
-  SPAN_CREATE: "span-create",
-  SPAN_UPDATE: "span-update",
-  GENERATION_CREATE: "generation-create",
-  GENERATION_UPDATE: "generation-update",
-  SDK_LOG: "sdk-log",
+  TRACE_CREATE: 'trace-create',
+  SCORE_CREATE: 'score-create',
+  EVENT_CREATE: 'event-create',
+  SPAN_CREATE: 'span-create',
+  SPAN_UPDATE: 'span-update',
+  GENERATION_CREATE: 'generation-create',
+  GENERATION_UPDATE: 'generation-update',
+  SDK_LOG: 'sdk-log',
   // LEGACY, only required for backwards compatibility
-  OBSERVATION_CREATE: "observation-create",
-  OBSERVATION_UPDATE: "observation-update",
+  OBSERVATION_CREATE: 'observation-create',
+  OBSERVATION_UPDATE: 'observation-update',
 } as const;
 
 const base = z.object({
@@ -384,7 +396,7 @@ export const legacyObservationUpdateEvent = base.extend({
   body: LegacyObservationBody,
 });
 
-export const ingestionEvent = z.discriminatedUnion("type", [
+export const ingestionEvent = z.discriminatedUnion('type', [
   traceEvent,
   scoreEvent,
   eventCreateEvent,
@@ -403,7 +415,7 @@ export const ingestionBatchEvent = z.array(ingestionEvent);
 export type IngestionBatchEventType = z.infer<typeof ingestionBatchEvent>;
 
 export const ingestionEventWithProjectId = ingestionEvent.and(
-  z.object({ projectId: z.string() }),
+  z.object({ projectId: z.string() })
 );
 export type IngestionEventWithProjectIdType = z.infer<
   typeof ingestionEventWithProjectId

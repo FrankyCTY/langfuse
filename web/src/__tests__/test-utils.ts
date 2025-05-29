@@ -4,7 +4,7 @@ import { clickhouseClient } from "@langfuse/shared/src/server";
 import { type z } from "zod";
 
 export const pruneDatabase = async () => {
-  if (!env.DATABASE_URL.includes("localhost:5432")) {
+  if (!env.DATABASE_URL.includes("localhost:5400")) {
     throw new Error("You cannot prune database unless running on localhost.");
   }
 

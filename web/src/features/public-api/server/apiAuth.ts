@@ -121,7 +121,6 @@ export class ApiAuthService {
         // fetches by redis if available, fallback to postgres
         // api key from redis does
         const apiKey = await this.fetchApiKeyAndAddToRedis(hashFromProvidedKey);
-
         let finalApiKey = apiKey;
 
         if (!apiKey || !apiKey.fastHashedSecretKey) {
@@ -176,11 +175,14 @@ export class ApiAuthService {
         addUserToSpan({ projectId: finalApiKey.projectId });
 
         const plan = finalApiKey.plan;
+        logger.info(`========================== ${plan}`);
 
         if (!isPlan(plan)) {
           logger.error("Invalid plan type for key", finalApiKey.plan);
           throw new Error("Invalid credentials");
         }
+
+        logger.info("==========================");
 
         return {
           validKey: true,

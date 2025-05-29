@@ -9,6 +9,7 @@ import { type CloudConfigSchema } from "@langfuse/shared";
 export function getOrganizationPlan(cloudConfig?: CloudConfigSchema): Plan {
   if (process.env.NEXT_PUBLIC_LANGFUSE_CLOUD_REGION) {
     // in dev, grant team plan to all organizations
+    // FIXME: Grant enterprise level plan access
     // if (process.env.NEXT_PUBLIC_LANGFUSE_CLOUD_REGION === "DEV") {
     //   return "cloud:team";
     // }
@@ -35,9 +36,11 @@ export function getOrganizationPlan(cloudConfig?: CloudConfigSchema): Plan {
         }
       }
     }
+    // TODO: Organization membership without plan set up default to cloud:hobby
     return "cloud:hobby";
   }
 
+  // TODO: Server check plan
   if (env.LANGFUSE_EE_LICENSE_KEY !== undefined)
     return "self-hosted:enterprise";
 

@@ -1,18 +1,24 @@
-import { env } from "node:process";
-import z from "zod";
-import { ForbiddenError, UnauthorizedError } from "../../../errors";
-import { eventTypes, ingestionApiSchema, IngestionEventType } from "../types";
-import { getProcessorForEvent } from "./EventProcessor";
-import { TraceUpsertEventType } from "../../queues";
+import { env } from 'node:process';
+import z from 'zod';
+import { ForbiddenError, UnauthorizedError } from '../../../errors';
+import { eventTypes, ingestionApiSchema, ingestionEvent } from '../types';
+import { getProcessorForEvent } from './EventProcessor';
+import { TraceUpsertEventType } from '../../queues';
+import { env } from 'node:process';
+import z from 'zod';
+import { ForbiddenError, UnauthorizedError } from '../../../errors';
+import { eventTypes, ingestionApiSchema, IngestionEventType } from '../types';
+import { getProcessorForEvent } from './EventProcessor';
+import { TraceUpsertEventType } from '../../queues';
 import {
   convertTraceUpsertEventsToRedisEvents,
   TraceUpsertQueue,
-} from "../../redis/traceUpsert";
-import { ApiAccessScope } from "../../auth/types";
-import { redis } from "../../redis/redis";
-import { backOff } from "exponential-backoff";
-import { Model } from "../../..";
-import { logger } from "../../logger";
+} from '../../redis/traceUpsert';
+import { ApiAccessScope } from '../../auth/types';
+import { redis } from '../../redis/redis';
+import { backOff } from 'exponential-backoff';
+import { Model } from '../../..';
+import { logger } from '../../logger';
 
 export type BatchResult = {
   result: unknown;
@@ -27,7 +33,7 @@ type TokenCountInput = {
 
 export type LegacyIngestionAccessScope = Omit<
   ApiAccessScope,
-  "orgId" | "plan" | "rateLimitOverrides"
+  'orgId' | 'plan' | 'rateLimitOverrides'
 >;
 
 type LegacyIngestionAuthHeaderVerificationResult =
@@ -41,7 +47,7 @@ type LegacyIngestionAuthHeaderVerificationResult =
     };
 
 export const handleBatch = async (
-  events: z.infer<typeof ingestionApiSchema>["batch"],
+  events: z.infer<typeof ingestionApiSchema>['batch'],
   authCheck: LegacyIngestionAuthHeaderVerificationResult,
   calculateTokenDelegate: (p: TokenCountInput) => number | undefined,
 ) => {
@@ -73,7 +79,7 @@ export const handleBatch = async (
       }); // Push each result into the array
     } catch (error) {
       // Handle or log the error if `handleSingleEvent` fails
-      logger.error("Error handling event:", error);
+      logger.error('Error handling event:', error);
       // Decide how to handle the error: rethrow, continue, or push an error object to results
       // For example, push an error object:
       errors.push({
@@ -89,10 +95,10 @@ export const handleBatch = async (
 
 async function retry<T>(request: () => Promise<T>): Promise<T> {
   return await backOff(request, {
-    numOfAttempts: env.LANGFUSE_ASYNC_INGESTION_PROCESSING === "true" ? 5 : 3,
+    numOfAttempts: env.LANGFUSE_ASYNC_INGESTION_PROCESSING === 'true' ? 5 : 3,
     retry: (e: Error, attemptNumber: number) => {
       if (e instanceof UnauthorizedError || e instanceof ForbiddenError) {
-        logger.info("not retrying auth error");
+        logger.info('not retrying auth error');
         return false;
       }
       logger.info(`retrying processing events ${attemptNumber}`);
@@ -111,12 +117,12 @@ const handleSingleEvent = async (
 ) => {
   const { body } = event;
   let restEvent = body;
-  if ("input" in body) {
+  if ('input' in body) {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { input, ...rest } = body;
     restEvent = rest;
   }
-  if ("output" in restEvent) {
+  if ('output' in restEvent) {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { output, ...rest } = restEvent;
     restEvent = rest;
@@ -131,11 +137,13 @@ const handleSingleEvent = async (
   // Deny access to non-score events if the access level is not "all"
   // This is an additional safeguard to auth checks in EventProcessor
   if (
-    apiScope.accessLevel !== "all" &&
+    apiScope.accessLevel !== 'all' &&
     cleanedEvent.type !== eventTypes.SCORE_CREATE
   ) {
-    throw new ForbiddenError("Access denied. Event type not allowed.");
+    throw new ForbiddenError('Access denied. Event type not allowed.');
   }
+
+  logger.info(`---> ${JSON.stringify(cleanedEvent)}`);
 
   return getProcessorForEvent(cleanedEvent, calculateTokenDelegate).process(
     apiScope,
@@ -144,9 +152,9 @@ const handleSingleEvent = async (
 
 // cleans NULL characters from the event
 export function cleanEvent(obj: unknown): unknown {
-  if (typeof obj === "string") {
-    return obj.replace(/\u0000/g, "");
-  } else if (typeof obj === "object" && obj !== null) {
+  if (typeof obj === 'string') {
+    return obj.replace(/\u0000/g, '');
+  } else if (typeof obj === 'object' && obj !== null) {
     if (Array.isArray(obj)) {
       return obj.map(cleanEvent);
     } else {
@@ -178,8 +186,8 @@ export const addTracesToTraceUpsertQueue = async (
     .filter((result) => result.type === eventTypes.TRACE_CREATE) // we only have create, no update.
     .map((result) =>
       result.result &&
-      typeof result.result === "object" &&
-      "id" in result.result
+      typeof result.result === 'object' &&
+      'id' in result.result
         ? // ingestion API only gets traces for one projectId
           { traceId: result.result.id as string, projectId }
         : null,
@@ -192,13 +200,13 @@ export const addTracesToTraceUpsertQueue = async (
 
       const queue = TraceUpsertQueue.getInstance();
       if (!queue) {
-        logger.error("TraceUpsertQueue not initialized");
+        logger.error('TraceUpsertQueue not initialized');
         return;
       }
 
       await queue.addBulk(convertTraceUpsertEventsToRedisEvents(traceEvents));
     }
   } catch (error) {
-    logger.error("Error sending events to worker", error);
+    logger.error('Error sending events to worker', error);
   }
 };

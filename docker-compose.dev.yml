@@ -1,7 +1,7 @@
 services:
   clickhouse:
     image: clickhouse/clickhouse-server
-    user: "101:101"
+    user: '101:101'
     container_name: clickhouse
     hostname: clickhouse
     environment:
@@ -12,8 +12,8 @@ services:
       - langfuse_clickhouse_data:/var/lib/clickhouse
       - langfuse_clickhouse_logs:/var/log/clickhouse-server
     ports:
-      - "8123:8123"
-      - "9000:9000"
+      - '8123:8123'
+      - '9003:9000'
     depends_on:
       - postgres
 
@@ -27,12 +27,12 @@ services:
       MINIO_ACCESS_KEY: minio
       MINIO_SECRET_KEY: miniosecret
     ports:
-      - "9090:9000"
-      - "9091:9001"
+      - '9090:9000'
+      - '9091:9001'
     volumes:
       - langfuse_minio_data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ['CMD', 'mc', 'ready', 'local']
       interval: 1s
       timeout: 5s
       retries: 5
@@ -50,17 +50,17 @@ services:
     image: postgres:${POSTGRES_VERSION:-latest}
     restart: always
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
       interval: 3s
       timeout: 3s
       retries: 10
-    command: ["postgres", "-c", "log_statement=all"]
+    command: ['postgres', '-c', 'log_statement=all']
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=postgres
     ports:
-      - 5432:5432
+      - 5400:5432
     volumes:
       - langfuse_postgres_data:/var/lib/postgresql/data
 

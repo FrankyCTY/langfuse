@@ -1,4 +1,4 @@
-version: "3.5"
+version: '3.5'
 
 services:
   server:
@@ -11,9 +11,9 @@ services:
       - db
       - redis
     ports:
-      - "3000:3000"
+      - '3000:3000'
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/postgres
+      - DATABASE_URL=postgresql://postgres:postgres@db:5400/postgres
       - NEXTAUTH_SECRET=mysecret
       - SALT=mysalt
       - ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000 # generate via `openssl rand -hex 32`
@@ -31,7 +31,7 @@ services:
       - LANGFUSE_INIT_USER_PASSWORD=${LANGFUSE_INIT_USER_PASSWORD:-}
     restart: always
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/public/health"]
+      test: ['CMD', 'curl', '-f', 'http://localhost:3000/api/public/health']
       interval: 30s
       timeout: 10s
       retries: 3
@@ -46,9 +46,9 @@ services:
       - db
       - redis
     ports:
-      - "3030:3030"
+      - '3030:3030'
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/postgres
+      - DATABASE_URL=postgresql://postgres:postgres@db:5400/postgres
       - NEXTAUTH_SECRET=mysecret
       - TELEMETRY_ENABLED=${TELEMETRY_ENABLED:-true}
       - LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES=${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-false}
@@ -58,7 +58,7 @@ services:
       - REDIS_AUTH=${REDIS_AUTH:-myredissecret}
     restart: always
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3030/api/health"]
+      test: ['CMD', 'curl', '-f', 'http://localhost:3030/api/health']
       interval: 30s
       timeout: 10s
       retries: 3
@@ -79,7 +79,7 @@ services:
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=postgres
     ports:
-      - 5432:5432
+      - 5400:5400
     volumes:
       - database_data:/var/lib/postgresql/data
 
