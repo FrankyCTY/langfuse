@@ -5,15 +5,22 @@ import { throwIfNoProjectAccess } from "@/src/features/rbac/utils/checkProjectAc
 import {
   createTRPCRouter,
   protectedProjectProcedure,
+  protectedProjectProcedureWithoutTracing,
 } from "@/src/server/api/trpc";
 import {
   type ChatMessage,
   LLMApiKeySchema,
   ChatMessageRole,
   supportedModels,
+  GCPServiceAccountKeySchema,
 } from "@langfuse/shared";
 import { encrypt } from "@langfuse/shared/encryption";
-import { fetchLLMCompletion, logger } from "@langfuse/shared/src/server";
+import {
+  ChatMessageType,
+  fetchLLMCompletion,
+  LLMAdapter,
+  logger,
+} from "@langfuse/shared/src/server";
 
 export function getDisplaySecretKey(secretKey: string) {
   return secretKey.endsWith('"}')
@@ -22,7 +29,7 @@ export function getDisplaySecretKey(secretKey: string) {
 }
 
 export const llmApiKeyRouter = createTRPCRouter({
-  create: protectedProjectProcedure
+  create: protectedProjectProcedureWithoutTracing
     .input(CreateLlmApiKey)
     .mutation(async ({ input, ctx }) => {
       try {
@@ -36,6 +43,12 @@ export const llmApiKeyRouter = createTRPCRouter({
           data: {
             projectId: input.projectId,
             secretKey: encrypt(input.secretKey),
+            extraHeaders: input.extraHeaders
+              ? encrypt(JSON.stringify(input.extraHeaders))
+              : undefined,
+            extraHeaderKeys: input.extraHeaders
+              ? Object.keys(input.extraHeaders)
+              : undefined,
             adapter: input.adapter,
             displaySecretKey: getDisplaySecretKey(input.secretKey),
             provider: input.provider,
@@ -71,18 +84,59 @@ export const llmApiKeyRouter = createTRPCRouter({
         scope: "llmApiKeys:delete",
       });
 
-      await ctx.prisma.llmApiKeys.delete({
+      const llmApiKey = await ctx.prisma.llmApiKeys.findUnique({
         where: {
           id: input.id,
           projectId: input.projectId,
         },
       });
 
-      await auditLog({
-        session: ctx.session,
-        resourceType: "llmApiKey",
-        resourceId: input.id,
-        action: "delete",
+      return ctx.prisma.$transaction(async (tx) => {
+        // Check if the llm api key is used for the default evaluation model
+        // If so, it will be deleted and we must invalidate all eval jobs that rely on it
+        const defaultModel = await tx.defaultLlmModel.findFirst({
+          where: {
+            projectId: input.projectId,
+          },
+        });
+
+        if (!!defaultModel && defaultModel.llmApiKeyId === llmApiKey?.id) {
+          // Invalidate all eval jobs that rely on the default model
+          const evalTemplates = await tx.evalTemplate.findMany({
+            where: {
+              OR: [{ projectId: input.projectId }, { projectId: null }],
+              provider: null,
+              model: null,
+            },
+          });
+
+          await tx.jobConfiguration.updateMany({
+            where: {
+              evalTemplateId: { in: evalTemplates.map((et) => et.id) },
+              projectId: input.projectId,
+            },
+            data: {
+              status: "INACTIVE",
+            },
+          });
+        }
+
+        await tx.llmApiKeys.delete({
+          where: {
+            id: input.id,
+            projectId: input.projectId,
+          },
+        });
+
+        await auditLog({
+          session: ctx.session,
+          resourceType: "llmApiKey",
+          resourceId: input.id,
+          before: llmApiKey,
+          action: "delete",
+        });
+
+        return { success: true };
       });
     }),
   all: protectedProjectProcedure
@@ -99,10 +153,15 @@ export const llmApiKeyRouter = createTRPCRouter({
       });
 
       const apiKeys = z
-        .array(LLMApiKeySchema.extend({ secretKey: z.undefined() }))
+        .array(
+          LLMApiKeySchema.extend({
+            secretKey: z.undefined(),
+            extraHeaders: z.undefined(),
+          }),
+        )
         .parse(
           await ctx.prisma.llmApiKeys.findMany({
-            // we must not return the secret key via the API, hence not selected
+            // we must not return the secret key AND extra headers via the API, hence not selected
             select: {
               id: true,
               createdAt: true,
@@ -114,6 +173,7 @@ export const llmApiKeyRouter = createTRPCRouter({
               baseURL: true,
               customModels: true,
               withDefaultModels: true,
+              extraHeaderKeys: true,
             },
             where: {
               projectId: input.projectId,
@@ -133,7 +193,7 @@ export const llmApiKeyRouter = createTRPCRouter({
       };
     }),
 
-  test: protectedProjectProcedure
+  test: protectedProjectProcedureWithoutTracing
     .input(CreateLlmApiKey)
     .mutation(async ({ input }) => {
       try {
@@ -143,9 +203,25 @@ export const llmApiKeyRouter = createTRPCRouter({
 
         if (!model) throw Error("No model found");
 
+        if (input.adapter === LLMAdapter.VertexAI) {
+          const parsed = GCPServiceAccountKeySchema.safeParse(
+            JSON.parse(input.secretKey),
+          );
+          if (!parsed.success)
+            throw Error("Invalid GCP service account JSON key");
+        }
+
         const testMessages: ChatMessage[] = [
-          { role: ChatMessageRole.System, content: "You are a bot" },
-          { role: ChatMessageRole.User, content: "How are you?" },
+          {
+            role: ChatMessageRole.System,
+            content: "You are a bot",
+            type: ChatMessageType.System,
+          },
+          {
+            role: ChatMessageRole.User,
+            content: "How are you?",
+            type: ChatMessageType.User,
+          },
         ];
 
         await fetchLLMCompletion({
@@ -156,6 +232,7 @@ export const llmApiKeyRouter = createTRPCRouter({
           },
           baseURL: input.baseURL,
           apiKey: input.secretKey,
+          extraHeaders: input.extraHeaders,
           messages: testMessages,
           streaming: false,
           maxRetries: 1,

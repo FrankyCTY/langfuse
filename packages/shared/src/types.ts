@@ -23,6 +23,7 @@ export type WipFilterState = WipFilterCondition[];
 export type FilterOption = {
   value: string;
   count?: number;
+  displayValue?: string; // FIX: Temporary workaround: Used to display a different value than the actual value since multiSelect doesn't support key-value pairs
 };
 
 export type TableName =
@@ -32,4 +33,7 @@ export type TableName =
   | "scores"
   | "prompts"
   | "dashboard"
-  | "users";
+  | "widgets"
+  | "users"
+  | "eval_configs"
+  | "job_executions";

@@ -7,9 +7,11 @@ import { type LangfuseColumnDef } from "@/src/components/table/types";
 import { IOTableCell } from "@/src/components/ui/CodeJsonViewer";
 import useColumnOrder from "@/src/features/column-visibility/hooks/useColumnOrder";
 import useColumnVisibility from "@/src/features/column-visibility/hooks/useColumnVisibility";
+import { useQueryFilterState } from "@/src/features/filters/hooks/useFilterState";
+import { evalExecutionsFilterCols } from "@/src/server/api/definitions/evalExecutionsTable";
 import { type RouterOutputs, api } from "@/src/utils/api";
+import { type Prisma } from "@langfuse/shared";
 import { createColumnHelper } from "@tanstack/react-table";
-import { type ReactNode } from "react";
 import { useQueryParams, withDefault, NumberParam } from "use-query-params";
 
 export type JobExecutionRow = {
@@ -17,6 +19,7 @@ export type JobExecutionRow = {
   scoreName?: string;
   scoreValue?: number;
   scoreComment?: string;
+  scoreMetadata?: Prisma.JsonValue;
   startTime?: string;
   endTime?: string;
   traceId?: string;
@@ -28,20 +31,26 @@ export type JobExecutionRow = {
 export default function EvalLogTable({
   projectId,
   jobConfigurationId,
-  menuItems,
 }: {
   projectId: string;
   jobConfigurationId?: string;
-  menuItems?: ReactNode;
 }) {
   const [rowHeight, setRowHeight] = useRowHeightLocalStorage("evalLogs", "s");
   const [paginationState, setPaginationState] = useQueryParams({
     pageIndex: withDefault(NumberParam, 0),
     pageSize: withDefault(NumberParam, 50),
   });
+
+  const [filterState, setFilterState] = useQueryFilterState(
+    [],
+    "job_executions",
+    projectId,
+  );
+
   const logs = api.evals.getLogs.useQuery({
     page: paginationState.pageIndex,
     limit: paginationState.pageSize,
+    filter: filterState,
     jobConfigurationId,
     projectId,
   });
@@ -172,10 +181,11 @@ export default function EvalLogTable({
       scoreName: jobConfig.score?.name ?? undefined,
       scoreValue: jobConfig.score?.value ?? undefined,
       scoreComment: jobConfig.score?.comment ?? undefined,
+      scoreMetadata: jobConfig.score?.metadata ?? undefined,
       startTime: jobConfig.startTime?.toLocaleString() ?? undefined,
       endTime: jobConfig.endTime?.toLocaleString() ?? undefined,
       traceId: jobConfig.jobInputTraceId ?? undefined,
-      templateId: jobConfig.jobConfiguration.evalTemplateId ?? "",
+      templateId: jobConfig.jobTemplateId ?? "",
       evaluatorId: jobConfig.jobConfigurationId,
       error: jobConfig.error ?? undefined,
     };
@@ -191,7 +201,9 @@ export default function EvalLogTable({
         setColumnOrder={setColumnOrder}
         rowHeight={rowHeight}
         setRowHeight={setRowHeight}
-        actionButtons={menuItems}
+        filterState={filterState}
+        setFilterState={setFilterState}
+        filterColumnDefinition={evalExecutionsFilterCols}
       />
       <DataTable
         columns={columns}

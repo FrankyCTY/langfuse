@@ -23,11 +23,15 @@ export class PosthogCallbackHandler extends BaseCallbackHandler {
   }
 
   async handleLLMEnd(output: LLMResult) {
-    const outputString = output.generations[0][0].text;
-    const properties = this.getEventProperties(outputString);
+    const generation = output.generations[0][0];
 
-    this.captureEvent(properties);
-    await this.posthog.flushAsync();
+    if (generation) {
+      const outputString = output.generations[0][0].text;
+      const properties = this.getEventProperties(outputString);
+
+      this.captureEvent(properties);
+      await this.posthog.flush();
+    }
   }
 
   private getInputLength() {
@@ -55,7 +59,7 @@ export class PosthogCallbackHandler extends BaseCallbackHandler {
   }
 
   public async flushAsync() {
-    await this.posthog.flushAsync();
+    await this.posthog.flush();
   }
 }
 

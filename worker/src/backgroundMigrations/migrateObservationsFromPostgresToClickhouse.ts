@@ -54,13 +54,44 @@ export default class MigrateObservationsFromPostgresToClickhouse
 
   async validate(
     args: Record<string, unknown>,
+    attempts = 5,
   ): Promise<{ valid: boolean; invalidReason: string | undefined }> {
-    if (!env.CLICKHOUSE_URL) {
+    // Check if Clickhouse credentials are configured
+    if (
+      !env.CLICKHOUSE_URL ||
+      !env.CLICKHOUSE_USER ||
+      !env.CLICKHOUSE_PASSWORD
+    ) {
       return {
         valid: false,
-        invalidReason: "Clickhouse URL must be configured to perform migration",
+        invalidReason:
+          "Clickhouse credentials must be configured to perform migration",
       };
     }
+
+    // Check if ClickHouse observations table exists
+    const tables = await clickhouseClient().query({
+      query: "SHOW TABLES",
+    });
+    const tableNames = (await tables.json()).data as { name: string }[];
+    if (!tableNames.some((r) => r.name === "observations")) {
+      // Retry if the table does not exist as this may mean migrations are still pending
+      if (attempts > 0) {
+        logger.info(
+          `ClickHouse observations table does not exist. Retrying in 10s...`,
+        );
+        return new Promise((resolve) => {
+          setTimeout(() => resolve(this.validate(args, attempts - 1)), 10_000);
+        });
+      }
+
+      // If all retries are exhausted, return as invalid
+      return {
+        valid: false,
+        invalidReason: "ClickHouse observations table does not exist",
+      };
+    }
+
     return { valid: true, invalidReason: undefined };
   }
 
@@ -73,7 +104,7 @@ export default class MigrateObservationsFromPostgresToClickhouse
     const stateSuffix = (args.stateSuffix as string) ?? "";
     const initialDate = await this.getMaxDate(stateSuffix);
     const maxRowsToProcess = Number(args.maxRowsToProcess ?? Infinity);
-    const batchSize = Number(args.batchSize ?? 5000);
+    const batchSize = Number(args.batchSize ?? 1000);
     const maxDate =
       initialDate ?? new Date((args.maxDate as string) ?? new Date());
 
@@ -110,7 +141,7 @@ export default class MigrateObservationsFromPostgresToClickhouse
       );
 
       const insertStart = Date.now();
-      await clickhouseClient.insert({
+      await clickhouseClient().insert({
         table: "observations",
         values: observations.map(convertPostgresObservationToInsert),
         format: "JSONEachRow",
@@ -159,7 +190,7 @@ export default class MigrateObservationsFromPostgresToClickhouse
 async function main() {
   const args = parseArgs({
     options: {
-      batchSize: { type: "string", short: "b", default: "5000" },
+      batchSize: { type: "string", short: "b", default: "1000" },
       maxRowsToProcess: { type: "string", short: "r", default: "Infinity" },
       maxDate: {
         type: "string",

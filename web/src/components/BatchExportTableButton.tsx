@@ -3,9 +3,12 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuPortal,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
 } from "@/src/components/ui/dropdown-menu";
 import { Button } from "@/src/components/ui/button";
-import { ChevronDownIcon, Loader } from "lucide-react";
+import { Download, Loader } from "lucide-react";
 import {
   type BatchExportTableName,
   exportOptions,
@@ -16,7 +19,6 @@ import React from "react";
 import { api } from "@/src/utils/api";
 import { showSuccessToast } from "@/src/features/notifications/showSuccessToast";
 import { useHasProjectAccess } from "@/src/features/rbac/utils/checkProjectAccess";
-import { useHasOrgEntitlement } from "@/src/features/entitlements/hooks";
 
 export type BatchExportTableButtonProps = {
   projectId: string;
@@ -38,13 +40,17 @@ export const BatchExportTableButton: React.FC<BatchExportTableButtonProps> = (
       showSuccessToast({
         title: "Export queued",
         description: "You will receive an email when the export is ready.",
+        duration: 10000,
+        link: {
+          href: `/project/${props.projectId}/settings/exports`,
+          text: "View exports",
+        },
       });
     },
   });
-  const entitled = useHasOrgEntitlement("batch-export");
   const hasAccess = useHasProjectAccess({
     projectId: props.projectId,
-    scope: "batchExport:create",
+    scope: "batchExports:create",
   });
 
   const handleExport = async (format: BatchExportFileFormat) => {
@@ -61,36 +67,34 @@ export const BatchExportTableButton: React.FC<BatchExportTableButtonProps> = (
     });
   };
 
-  if (!entitled || !hasAccess) return null;
+  if (!hasAccess) return null;
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" className="ml-auto whitespace-nowrap">
-          <span className="hidden @6xl:inline">
-            {props.filterState.length > 0 || props.searchQuery
-              ? "Export selection"
-              : "Export all"}{" "}
-          </span>
-          <span className="@6xl:hidden">Export</span>
+        <Button variant="outline" size="icon" title="Export">
           {isExporting ? (
-            <Loader className="ml-2 h-4 w-4 animate-spin" />
+            <Loader className="h-4 w-4 animate-spin" />
           ) : (
-            <ChevronDownIcon className="ml-2 h-4 w-4" />
+            <Download className="h-4 w-4" />
           )}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        {Object.entries(exportOptions).map(([key, options]) => (
-          <DropdownMenuItem
-            key={key}
-            className="capitalize"
-            onClick={() => void handleExport(key as BatchExportFileFormat)}
-          >
-            as {options.label}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
+      <DropdownMenuPortal>
+        <DropdownMenuContent>
+          <DropdownMenuLabel>Export</DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          {Object.entries(exportOptions).map(([key, options]) => (
+            <DropdownMenuItem
+              key={key}
+              className="capitalize"
+              onClick={() => void handleExport(key as BatchExportFileFormat)}
+            >
+              as {options.label}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenuPortal>
     </DropdownMenu>
   );
 };

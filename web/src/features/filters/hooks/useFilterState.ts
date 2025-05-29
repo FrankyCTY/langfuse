@@ -16,6 +16,8 @@ import {
 import { promptsTableCols } from "@/src/server/api/definitions/promptsTable";
 import { usersTableCols } from "@/src/server/api/definitions/usersTable";
 import useSessionStorage from "@/src/components/useSessionStorage";
+import { evalConfigFilterColumns } from "@/src/server/api/definitions/evalConfigsTable";
+import { evalExecutionsFilterCols } from "@/src/server/api/definitions/evalExecutionsTable";
 
 const DEBUG_QUERY_STATE = false;
 
@@ -29,15 +31,19 @@ const getCommaArrayParam = (table: TableName) => ({
         const columnId = getColumnId(table, f.column);
 
         const stringified = `${columnId};${f.type};${
-          f.type === "numberObject" || f.type === "stringObject" ? f.key : ""
+          f.type === "numberObject" ||
+          f.type === "stringObject" ||
+          f.type === "categoryOptions"
+            ? f.key
+            : ""
         };${f.operator};${encodeURIComponent(
           f.type === "datetime"
             ? new Date(f.value).toISOString()
-            : f.type === "stringOptions"
+            : f.type === "stringOptions" ||
+                f.type === "arrayOptions" ||
+                f.type === "categoryOptions"
               ? f.value.join("|")
-              : f.type === "arrayOptions"
-                ? f.value.join("|")
-                : f.value,
+              : f.value,
         )}`;
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (DEBUG_QUERY_STATE) console.log("stringified", stringified);
@@ -62,13 +68,13 @@ const getCommaArrayParam = (table: TableName) => ({
               ? new Date(decodedValue)
               : type === "number" || type === "numberObject"
                 ? Number(decodedValue)
-                : type === "stringOptions"
+                : type === "stringOptions" ||
+                    type === "arrayOptions" ||
+                    type === "categoryOptions"
                   ? decodedValue.split("|")
-                  : type === "arrayOptions"
-                    ? decodedValue.split("|")
-                    : type === "boolean"
-                      ? decodedValue === "true"
-                      : decodedValue;
+                  : type === "boolean"
+                    ? decodedValue === "true"
+                    : decodedValue;
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (DEBUG_QUERY_STATE) console.log("parsedValue", parsedValue);
         const parsed = singleFilter.safeParse({
@@ -95,6 +101,22 @@ export const useQueryFilterState = (
       !!projectId ? `${table}FilterState-${projectId}` : `${table}FilterState`,
       initialState,
     );
+  // Merge initial state with session state if filter elements don't exist
+  const mergedInitialState = initialState.reduce(
+    (acc, filter) => {
+      const exists = sessionFilterState.some((f) => f.column === filter.column);
+      if (!exists) {
+        acc.push(filter);
+      }
+      return acc;
+    },
+    [...sessionFilterState],
+  );
+
+  // Update session storage with merged state
+  if (mergedInitialState.length !== sessionFilterState.length) {
+    setSessionFilterState(mergedInitialState);
+  }
 
   // Note: `use-query-params` library does not automatically update the URL with the default value
   const [filterState, setFilterState] = useQueryParam(
@@ -117,6 +139,17 @@ const tableCols = {
   scores: scoresTableCols,
   prompts: promptsTableCols,
   users: usersTableCols,
+  eval_configs: evalConfigFilterColumns,
+  job_executions: evalExecutionsFilterCols,
+  widgets: [
+    { id: "environment", name: "Environment" },
+    { id: "traceName", name: "Trace Name" },
+    { id: "tags", name: "Tags" },
+    { id: "release", name: "Release" },
+    { id: "user", name: "User" },
+    { id: "session", name: "Session" },
+    { id: "version", name: "Version" },
+  ],
   dashboard: [
     { id: "traceName", name: "Trace Name" },
     { id: "tags", name: "Tags" },

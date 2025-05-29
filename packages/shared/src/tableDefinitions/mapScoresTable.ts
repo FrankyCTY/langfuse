@@ -1,6 +1,6 @@
-import { UiColumnMapping } from "./types";
+import { UiColumnMappings } from "./types";
 
-export const scoresTableUiColumnDefinitions: UiColumnMapping[] = [
+export const scoresTableUiColumnDefinitions: UiColumnMappings = [
   {
     uiTableName: "ID",
     uiTableId: "id",
@@ -14,6 +14,12 @@ export const scoresTableUiColumnDefinitions: UiColumnMapping[] = [
     clickhouseSelect: "timestamp",
   },
   {
+    uiTableName: "Environment",
+    uiTableId: "environment",
+    clickhouseTableName: "scores",
+    clickhouseSelect: "environment",
+  },
+  {
     uiTableName: "Trace ID",
     uiTableId: "traceId",
     clickhouseTableName: "scores",
@@ -24,6 +30,12 @@ export const scoresTableUiColumnDefinitions: UiColumnMapping[] = [
     uiTableId: "observationId",
     clickhouseTableName: "scores",
     clickhouseSelect: "observation_id",
+  },
+  {
+    uiTableName: "Session ID",
+    uiTableId: "sessionId",
+    clickhouseTableName: "scores",
+    clickhouseSelect: "session_id",
   },
   {
     uiTableName: "Name",
@@ -69,13 +81,13 @@ export const scoresTableUiColumnDefinitions: UiColumnMapping[] = [
   },
   {
     uiTableName: "Trace Name",
-    uiTableId: "trace_name",
+    uiTableId: "traceName",
     clickhouseTableName: "traces",
     clickhouseSelect: "t.name",
   },
   {
     uiTableName: "User ID",
-    uiTableId: "user_id",
+    uiTableId: "userId",
     clickhouseTableName: "traces",
     clickhouseSelect: "t.user_id",
   },

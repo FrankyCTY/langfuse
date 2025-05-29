@@ -1,5 +1,5 @@
-import { Button } from "@/src/components/ui/button";
-import React, { useEffect, useState } from "react";
+import { Button, type ButtonProps } from "@/src/components/ui/button";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -19,7 +19,7 @@ import {
 import { Input } from "@/src/components/ui/input";
 import { useHasProjectAccess } from "@/src/features/rbac/utils/checkProjectAccess";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { CircleAlert, Edit, LockIcon, PlusIcon } from "lucide-react";
+import { Edit, PlusIcon } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { Form } from "@/src/components/ui/form";
 import { Textarea } from "@/src/components/ui/textarea";
@@ -31,32 +31,35 @@ import {
 import { api } from "@/src/utils/api";
 import { getScoreDataTypeIcon } from "@/src/features/scores/components/ScoreDetailColumnHelpers";
 import { MultiSelectKeyValues } from "@/src/features/scores/components/multi-select-key-values";
-import { CommandItem } from "@/src/components/ui/command";
 import { useRouter } from "next/router";
 import { usePostHogClientCapture } from "@/src/features/posthog-analytics/usePostHogClientCapture";
-import { useOrganizationPlan } from "@/src/features/entitlements/hooks";
 import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/src/components/ui/hover-card";
+  useHasEntitlement,
+  useEntitlementLimit,
+} from "@/src/features/entitlements/hooks";
+import { ActionButton } from "@/src/components/ActionButton";
+import { DropdownMenuItem } from "@/src/components/ui/dropdown-menu";
+import { useUniqueNameValidation } from "@/src/hooks/useUniqueNameValidation";
 
 export const CreateOrEditAnnotationQueueButton = ({
   projectId,
   queueId,
   variant = "secondary",
+  size,
 }: {
   projectId: string;
   queueId?: string;
-  variant?: "secondary" | "ghost";
+  variant?: ButtonProps["variant"];
+  size?: ButtonProps["size"];
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const hasAccess = useHasProjectAccess({
     projectId: projectId,
     scope: "annotationQueues:CUD",
   });
+  const hasEntitlement = useHasEntitlement("annotation-queues");
+  const queueLimit = useEntitlementLimit("annotation-queue-count");
   const router = useRouter();
-  const plan = useOrganizationPlan();
   const capture = usePostHogClientCapture();
 
   const queueQuery = api.annotationQueues.byId.useQuery(
@@ -117,56 +120,25 @@ export const CreateOrEditAnnotationQueueButton = ({
     },
   );
 
+  const allQueueNamesAndIds = api.annotationQueues.allNamesAndIds.useQuery(
+    { projectId },
+    { enabled: hasAccess && !queueId },
+  );
+
+  const allQueueNames = useMemo(() => {
+    return !queueId && allQueueNamesAndIds.data
+      ? allQueueNamesAndIds.data.map((queue) => ({ value: queue.name }))
+      : [];
+  }, [allQueueNamesAndIds.data, queueId]);
+
+  useUniqueNameValidation({
+    currentName: form.watch("name"),
+    allNames: allQueueNames,
+    form,
+    errorMessage: "Queue name already exists.",
+  });
+
   const configs = configsData.data?.configs ?? [];
-
-  if (!hasAccess) {
-    return (
-      <Button variant={variant} disabled={true} className="justify-start">
-        <LockIcon className="-ml-0.5 mr-1.5 h-4 w-4" aria-hidden="true" />
-        <span className="text-sm">{queueId ? "Edit" : "New queue"}</span>
-      </Button>
-    );
-  }
-
-  if (queueCountData.isLoading) return null;
-
-  // gate cloud hobby usage of annotation queue
-  if (plan === "cloud:hobby" && !!queueCountData.data && !queueId) {
-    return (
-      <HoverCard>
-        <HoverCardTrigger asChild>
-          <Button
-            variant={variant}
-            className="relative grid grid-flow-row items-start justify-start overflow-hidden py-0 disabled:cursor-default"
-            disabled
-          >
-            <div className="mt-2 flex h-6 flex-row items-center justify-center">
-              <PlusIcon className="mr-1.5 h-4 w-4" aria-hidden="true" />
-              <span className="text-sm">New queue</span>
-            </div>
-            <div className="absolute top-0 flex h-3 w-full items-center justify-center bg-primary-accent">
-              <CircleAlert
-                className="mr-1 h-2 w-2 text-white"
-                aria-hidden="true"
-              />
-              <span className="text-xs text-white">At usage limit</span>
-            </div>
-          </Button>
-        </HoverCardTrigger>
-        <HoverCardContent className="w-80" align="start" side="right">
-          <div className="flex justify-between space-x-4">
-            <div className="space-y-1">
-              <h4 className="text-sm font-semibold">Usage Limit Reached</h4>
-              <p className="text-xs">
-                You have reached the maximum number of annotation queues allowed
-                on the Hobby plan. Upgrade your plan to create more queues.
-              </p>
-            </div>
-          </div>
-        </HoverCardContent>
-      </HoverCard>
-    );
-  }
 
   const onSubmit = (data: CreateQueue) => {
     if (queueId) {
@@ -202,20 +174,27 @@ export const CreateOrEditAnnotationQueueButton = ({
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DialogTrigger asChild>
-        <Button
+        <ActionButton
           variant={variant}
           onClick={() => setIsOpen(true)}
           className="justify-start"
+          icon={
+            queueId ? (
+              <Edit className="h-4 w-4" aria-hidden="true" />
+            ) : (
+              <PlusIcon className="h-4 w-4" aria-hidden="true" />
+            )
+          }
+          hasAccess={hasAccess}
+          hasEntitlement={hasEntitlement}
+          limitValue={queueCountData.data}
+          limit={queueLimit}
+          size={size}
         >
-          {queueId ? (
-            <Edit className="-ml-0.5 mr-1.5 h-4 w-4" aria-hidden="true" />
-          ) : (
-            <PlusIcon className="-ml-0.5 mr-1.5 h-4 w-4" aria-hidden="true" />
-          )}
           <span className="ml-1 text-sm font-normal">
             {queueId ? "Edit" : "New queue"}
           </span>
-        </Button>
+        </ActionButton>
       </DialogTrigger>
       {configsData.data && (
         <DialogContent className="max-h-[90vh] overflow-y-auto">
@@ -300,7 +279,7 @@ export const CreateOrEditAnnotationQueueButton = ({
                           };
                         })}
                         controlButtons={
-                          <CommandItem
+                          <DropdownMenuItem
                             onSelect={() => {
                               capture(
                                 "score_configs:manage_configs_item_click",
@@ -312,7 +291,7 @@ export const CreateOrEditAnnotationQueueButton = ({
                             }}
                           >
                             Manage score configs
-                          </CommandItem>
+                          </DropdownMenuItem>
                         }
                       />
                     </FormControl>
@@ -320,7 +299,11 @@ export const CreateOrEditAnnotationQueueButton = ({
                   </FormItem>
                 )}
               />
-              <Button type="submit" className="text-xs">
+              <Button
+                type="submit"
+                className="text-xs"
+                disabled={!!form.formState.errors.name}
+              >
                 {queueId ? "Save" : "Create"} queue
               </Button>
             </form>

@@ -1,44 +1,113 @@
-import { api } from "@/src/utils/api";
-
-import { type FilterState } from "@langfuse/shared";
-
+import { NoDataOrLoading } from "@/src/components/NoDataOrLoading";
+import { BaseTimeSeriesChart } from "@/src/features/dashboard/components/BaseTimeSeriesChart";
+import { DashboardCard } from "@/src/features/dashboard/components/cards/DashboardCard";
 import {
-  getAllModels,
   extractTimeSeriesData,
   fillMissingValuesAndTransform,
   isEmptyTimeSeries,
 } from "@/src/features/dashboard/components/hooks";
-import { DashboardCard } from "@/src/features/dashboard/components/cards/DashboardCard";
-import { compactNumberFormatter } from "@/src/utils/numbers";
 import { TabComponent } from "@/src/features/dashboard/components/TabsComponent";
-import { BaseTimeSeriesChart } from "@/src/features/dashboard/components/BaseTimeSeriesChart";
 import { TotalMetric } from "@/src/features/dashboard/components/TotalMetric";
 import { totalCostDashboardFormatted } from "@/src/features/dashboard/lib/dashboard-utils";
+import { api } from "@/src/utils/api";
 import {
-  dashboardDateRangeAggregationSettings,
   type DashboardDateRangeAggregationOption,
+  dashboardDateRangeAggregationSettings,
 } from "@/src/utils/date-range-utils";
-import { useClickhouse } from "@/src/components/layouts/ClickhouseAdminToggle";
-import { env } from "@/src/env.mjs";
-import { NoDataOrLoading } from "@/src/components/NoDataOrLoading";
+import { compactNumberFormatter } from "@/src/utils/numbers";
+import { type FilterState } from "@langfuse/shared";
+import {
+  ModelSelectorPopover,
+  useModelSelection,
+} from "@/src/features/dashboard/components/ModelSelector";
+import {
+  type QueryType,
+  mapLegacyUiTableFilterToView,
+} from "@/src/features/query";
+import { type DatabaseRow } from "@/src/server/api/services/sqlInterface";
 
 export const ModelUsageChart = ({
   className,
   projectId,
   globalFilterState,
   agg,
+  fromTimestamp,
+  toTimestamp,
+  userAndEnvFilterState,
+  isLoading = false,
 }: {
   className?: string;
   projectId: string;
   globalFilterState: FilterState;
   agg: DashboardDateRangeAggregationOption;
+  fromTimestamp: Date;
+  toTimestamp: Date;
+  userAndEnvFilterState: FilterState;
+  isLoading?: boolean;
 }) => {
-  const tokens = api.dashboard.chart.useQuery(
+  const {
+    allModels,
+    selectedModels,
+    setSelectedModels,
+    isAllSelected,
+    buttonText,
+    handleSelectAll,
+  } = useModelSelection(
+    projectId,
+    userAndEnvFilterState,
+    fromTimestamp,
+    toTimestamp,
+  );
+
+  const modelUsageQuery: QueryType = {
+    view: "observations",
+    dimensions: [{ field: "providedModelName" }],
+    metrics: [
+      { measure: "totalCost", aggregation: "sum" },
+      { measure: "totalTokens", aggregation: "sum" },
+    ],
+    filters: [
+      ...mapLegacyUiTableFilterToView("observations", userAndEnvFilterState),
+      {
+        column: "type",
+        operator: "=",
+        value: "GENERATION",
+        type: "string",
+      },
+      {
+        column: "providedModelName",
+        operator: "any of",
+        value: selectedModels,
+        type: "stringOptions",
+      },
+    ],
+    timeDimension: {
+      granularity: dashboardDateRangeAggregationSettings[agg].date_trunc,
+    },
+    fromTimestamp: fromTimestamp.toISOString(),
+    toTimestamp: toTimestamp.toISOString(),
+    orderBy: null,
+  };
+
+  const queryResult = api.dashboard.executeQuery.useQuery(
     {
       projectId,
-      from: env.NEXT_PUBLIC_LANGFUSE_CLOUD_REGION // Langfuse Cloud has already completed the cost backfill job, thus cost can be pulled directly from obs. table
-        ? "traces_observations"
-        : "traces_observationsview",
+      query: modelUsageQuery,
+    },
+    {
+      enabled: !isLoading && selectedModels.length > 0 && allModels.length > 0,
+      trpc: {
+        context: {
+          skipBatch: true,
+        },
+      },
+    },
+  );
+
+  const queryCostByType = api.dashboard.chart.useQuery(
+    {
+      projectId,
+      from: "traces_observations",
       select: [
         { column: "totalTokens", agg: "SUM" },
         { column: "calculatedTotalCost", agg: "SUM" },
@@ -47,6 +116,12 @@ export const ModelUsageChart = ({
       filter: [
         ...globalFilterState,
         { type: "string", column: "type", operator: "=", value: "GENERATION" },
+        {
+          type: "stringOptions",
+          column: "model",
+          operator: "any of",
+          value: selectedModels,
+        } as const,
       ],
       groupBy: [
         {
@@ -62,10 +137,10 @@ export const ModelUsageChart = ({
       orderBy: [
         { column: "calculatedTotalCost", direction: "DESC", agg: "SUM" },
       ],
-      queryClickhouse: useClickhouse(),
-      queryName: "observations-usage-timeseries",
+      queryName: "observations-cost-by-type-timeseries",
     },
     {
+      enabled: !isLoading && selectedModels.length > 0 && allModels.length > 0,
       trpc: {
         context: {
           skipBatch: true,
@@ -74,41 +149,120 @@ export const ModelUsageChart = ({
     },
   );
 
-  const allModels = getAllModels(projectId, globalFilterState, useClickhouse());
+  const queryUsageByType = api.dashboard.chart.useQuery(
+    {
+      projectId,
+      from: "traces_observations",
+      select: [
+        { column: "totalTokens", agg: "SUM" },
+        { column: "calculatedTotalCost", agg: "SUM" },
+        { column: "model" },
+      ],
+      filter: [
+        ...globalFilterState,
+        { type: "string", column: "type", operator: "=", value: "GENERATION" },
+        {
+          type: "stringOptions",
+          column: "model",
+          operator: "any of",
+          value: selectedModels,
+        } as const,
+      ],
+      groupBy: [
+        {
+          type: "datetime",
+          column: "startTime",
+          temporalUnit: dashboardDateRangeAggregationSettings[agg].date_trunc,
+        },
+        {
+          type: "string",
+          column: "model",
+        },
+      ],
+      orderBy: [{ column: "totalTokens", direction: "DESC", agg: "SUM" }],
+      queryName: "observations-usage-by-type-timeseries",
+    },
+    {
+      enabled: !isLoading && selectedModels.length > 0 && allModels.length > 0,
+      trpc: {
+        context: {
+          skipBatch: true,
+        },
+      },
+    },
+  );
 
-  const transformedTotalTokens =
-    tokens.data && allModels.length > 0
+  const costByType =
+    queryCostByType.data && allModels.length > 0
       ? fillMissingValuesAndTransform(
-          extractTimeSeriesData(tokens.data, "startTime", [
+          extractTimeSeriesData(queryCostByType.data, "intervalStart", [
             {
-              uniqueIdentifierColumns: [{ accessor: "model" }],
-              valueColumn: "sumTotalTokens",
+              uniqueIdentifierColumns: [{ accessor: "key" }],
+              valueColumn: "sum",
             },
           ]),
-          allModels,
+          [],
         )
       : [];
 
-  const transformedModelCost =
-    tokens.data && allModels.length > 0
+  const unitsByType =
+    queryUsageByType.data && allModels.length > 0
       ? fillMissingValuesAndTransform(
-          extractTimeSeriesData(tokens.data, "startTime", [
+          extractTimeSeriesData(queryUsageByType.data, "intervalStart", [
             {
-              uniqueIdentifierColumns: [{ accessor: "model" }],
-              valueColumn: "sumCalculatedTotalCost",
+              uniqueIdentifierColumns: [{ accessor: "key" }],
+              valueColumn: "sum",
             },
           ]),
-          allModels,
+          [],
         )
       : [];
 
-  const totalCost = tokens.data?.reduce(
-    (acc, curr) => acc + (curr.sumCalculatedTotalCost as number),
+  const unitsByModel =
+    queryResult.data && allModels.length > 0
+      ? fillMissingValuesAndTransform(
+          extractTimeSeriesData(
+            queryResult.data as DatabaseRow[],
+            "time_dimension",
+            [
+              {
+                uniqueIdentifierColumns: [{ accessor: "providedModelName" }],
+                valueColumn: "sum_totalTokens",
+              },
+            ],
+          ),
+          selectedModels,
+        )
+      : [];
+
+  const costByModel =
+    queryResult.data && allModels.length > 0
+      ? fillMissingValuesAndTransform(
+          extractTimeSeriesData(
+            queryResult.data as DatabaseRow[],
+            "time_dimension",
+            [
+              {
+                uniqueIdentifierColumns: [{ accessor: "providedModelName" }],
+                valueColumn: "sum_totalCost",
+              },
+            ],
+          ),
+          selectedModels,
+        )
+      : [];
+
+  const totalCost = queryResult.data?.reduce(
+    (acc, curr) =>
+      acc +
+      (!isNaN(Number(curr.sum_totalCost)) ? Number(curr.sum_totalCost) : 0),
     0,
   );
 
-  const totalTokens = tokens.data?.reduce(
-    (acc, curr) => acc + (curr.sumTotalTokens as number),
+  const totalTokens = queryResult.data?.reduce(
+    (acc, curr) =>
+      acc +
+      (!isNaN(Number(curr.sum_totalTokens)) ? Number(curr.sum_totalTokens) : 0),
     0,
   );
 
@@ -120,19 +274,34 @@ export const ModelUsageChart = ({
 
   const data = [
     {
-      tabTitle: "Total cost",
-      data: transformedModelCost,
+      tabTitle: "Cost by model",
+      data: costByModel,
       totalMetric: totalCostDashboardFormatted(totalCost),
-      metricDescription: `Token cost`,
+      metricDescription: `Cost`,
       formatter: oneValueUsdFormatter,
     },
     {
-      tabTitle: "Total tokens",
-      data: transformedTotalTokens,
+      tabTitle: "Cost by type",
+      data: costByType,
+      totalMetric: totalCostDashboardFormatted(totalCost),
+      metricDescription: `Cost`,
+      formatter: oneValueUsdFormatter,
+    },
+    {
+      tabTitle: "Units by model",
+      data: unitsByModel,
       totalMetric: totalTokens
         ? compactNumberFormatter(totalTokens)
         : compactNumberFormatter(0),
-      metricDescription: `Token count`,
+      metricDescription: `Units`,
+    },
+    {
+      tabTitle: "Units by type",
+      data: unitsByType,
+      totalMetric: totalTokens
+        ? compactNumberFormatter(totalTokens)
+        : compactNumberFormatter(0),
+      metricDescription: `Units`,
     },
   ];
 
@@ -140,7 +309,21 @@ export const ModelUsageChart = ({
     <DashboardCard
       className={className}
       title="Model Usage"
-      isLoading={tokens.isLoading}
+      isLoading={
+        isLoading || (queryResult.isLoading && selectedModels.length > 0)
+      }
+      headerRight={
+        <div className="flex items-center justify-end">
+          <ModelSelectorPopover
+            allModels={allModels}
+            selectedModels={selectedModels}
+            setSelectedModels={setSelectedModels}
+            buttonText={buttonText}
+            isAllSelected={isAllSelected}
+            handleSelectAll={handleSelectAll}
+          />
+        </div>
+      }
     >
       <TabComponent
         tabs={data.map((item) => {
@@ -153,13 +336,18 @@ export const ModelUsageChart = ({
                   description={item.metricDescription}
                   className="mb-4"
                 />
-                {isEmptyTimeSeries({ data: item.data }) || tokens.isLoading ? (
-                  <NoDataOrLoading isLoading={tokens.isLoading} />
+                {isEmptyTimeSeries({ data: item.data }) ||
+                isLoading ||
+                queryResult.isLoading ? (
+                  <NoDataOrLoading
+                    isLoading={isLoading || queryResult.isLoading}
+                  />
                 ) : (
                   <BaseTimeSeriesChart
                     agg={agg}
                     data={item.data}
                     showLegend={true}
+                    connectNulls={true}
                     valueFormatter={item.formatter}
                   />
                 )}

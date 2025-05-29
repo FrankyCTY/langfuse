@@ -17,13 +17,16 @@
 import { type CreateNextContextOptions } from "@trpc/server/adapters/next";
 import { type Session } from "next-auth";
 import { tracing } from "@baselime/trpc-opentelemetry-middleware";
-
+import { contextWithLangfuseProps } from "@langfuse/shared/src/server";
 import { getServerAuthSession } from "@/src/server/auth";
 import { prisma, Role } from "@langfuse/shared/src/db";
 import * as z from "zod";
+import * as opentelemetry from "@opentelemetry/api";
+import { type IncomingHttpHeaders } from "node:http";
 
 type CreateContextOptions = {
   session: Session | null;
+  headers: IncomingHttpHeaders;
 };
 
 /**
@@ -39,6 +42,7 @@ type CreateContextOptions = {
 export const createInnerTRPCContext = (opts: CreateContextOptions) => {
   return {
     session: opts.session,
+    headers: opts.headers,
     prisma,
     DB,
   };
@@ -56,14 +60,10 @@ export const createTRPCContext = async (opts: CreateNextContextOptions) => {
   // Get the session from the server using the getServerSession wrapper function
   const session = await getServerAuthSession({ req, res });
 
-  addUserToSpan({
-    userId: session?.user?.id,
-    email: session?.user?.email ?? undefined,
-  });
+  // Get the headers from the request
+  const headers = req.headers;
 
-  return createInnerTRPCContext({
-    session,
-  });
+  return createInnerTRPCContext({ session, headers });
 };
 
 /**
@@ -78,12 +78,7 @@ import superjson from "superjson";
 import { ZodError } from "zod";
 import { setUpSuperjson } from "@/src/utils/superjson";
 import { DB } from "@/src/server/db";
-import {
-  addUserToSpan,
-  getTraceByIdOrThrow,
-  logger,
-} from "@langfuse/shared/src/server";
-import { isClickhouseEligible } from "@/src/server/utils/checkClickhouseAccess";
+import { getTraceById, logger } from "@langfuse/shared/src/server";
 
 setUpSuperjson();
 
@@ -120,13 +115,17 @@ const withErrorHandling = t.middleware(async ({ ctx, next }) => {
   const res = await next({ ctx }); // pass the context to the next middleware
 
   if (!res.ok) {
-    logger.error("middleware intercepted error", res.error);
+    logger.error(
+      `middleware intercepted error with code ${res.error.code}`,
+      res.error,
+    );
 
     // Throw a new TRPC error with:
     // - The same error code as the original error
     // - Either the original error message OR "Internal error" if it's an INTERNAL_SERVER_ERROR
-    throw new TRPCError({
+    res.error = new TRPCError({
       code: res.error.code,
+      cause: null, // do not expose stack traces
       message:
         res.error.code !== "INTERNAL_SERVER_ERROR"
           ? res.error.message
@@ -137,10 +136,22 @@ const withErrorHandling = t.middleware(async ({ ctx, next }) => {
   return res;
 });
 
+// otel setup with proper context propagation
+const withOtelInstrumentation = t.middleware(async (opts) => {
+  const baggageCtx = contextWithLangfuseProps({
+    headers: opts.ctx.headers,
+    userId: opts.ctx.session?.user?.id,
+    projectId: (opts.rawInput as Record<string, string>)?.projectId,
+  });
+
+  // Execute the next middleware/procedure with our context
+  return opentelemetry.context.with(baggageCtx, () => opts.next());
+});
+
 // otel setup
-const withOtelTracingProcedure = t.procedure.use(
-  tracing({ collectInput: true, collectResult: true }),
-);
+const withOtelTracingProcedure = t.procedure
+  .use(withOtelInstrumentation)
+  .use(tracing({ collectInput: true, collectResult: true }));
 
 /**
  * Public (unauthenticated) procedure
@@ -174,6 +185,10 @@ const enforceUserIsAuthed = t.middleware(({ ctx, next }) => {
  * @see https://trpc.io/docs/procedures
  */
 export const protectedProcedure = withOtelTracingProcedure
+  .use(withErrorHandling)
+  .use(enforceUserIsAuthed);
+
+export const protectedProcedureWithoutTracing = t.procedure
   .use(withErrorHandling)
   .use(enforceUserIsAuthed);
 
@@ -215,11 +230,13 @@ const enforceUserIsAuthedAndProjectMember = t.middleware(
           },
           where: {
             id: projectId,
+            deletedAt: null,
           },
         });
         if (!dbProject) {
+          logger.error(`Project with ${projectId} id not found`);
           throw new TRPCError({
-            code: "INTERNAL_SERVER_ERROR",
+            code: "NOT_FOUND",
             message: "Project not found",
           });
         }
@@ -238,6 +255,7 @@ const enforceUserIsAuthedAndProjectMember = t.middleware(
         });
       }
       // not a member
+      logger.error(`User is not a member of this project with id ${projectId}`);
       throw new TRPCError({
         code: "UNAUTHORIZED",
         message: "User is not a member of this project",
@@ -264,6 +282,10 @@ export const protectedProjectProcedure = withOtelTracingProcedure
   .use(withErrorHandling)
   .use(enforceUserIsAuthedAndProjectMember);
 
+export const protectedProjectProcedureWithoutTracing = t.procedure
+  .use(withErrorHandling)
+  .use(enforceUserIsAuthedAndProjectMember);
+
 const inputOrganizationSchema = z.object({
   orgId: z.string(),
 });
@@ -287,6 +309,7 @@ const enforceIsAuthedAndOrgMember = t.middleware(({ ctx, rawInput, next }) => {
   );
 
   if (!sessionOrg && ctx.session.user.admin !== true) {
+    logger.error(`User ${ctx.session.user.id} is not a member of org ${orgId}`);
     throw new TRPCError({
       code: "UNAUTHORIZED",
       message: "User is not a member of this organization",
@@ -320,7 +343,7 @@ const inputTraceSchema = z.object({
   traceId: z.string(),
   projectId: z.string(),
   timestamp: z.date().nullish(),
-  queryClickhouse: z.boolean().nullish(),
+  fromTimestamp: z.date().nullish(),
 });
 
 const enforceTraceAccess = t.middleware(async ({ ctx, rawInput, next }) => {
@@ -337,51 +360,56 @@ const enforceTraceAccess = t.middleware(async ({ ctx, rawInput, next }) => {
   const traceId = result.data.traceId;
   const projectId = result.data.projectId;
   const timestamp = result.data.timestamp;
+  const fromTimestamp = result.data.fromTimestamp;
 
-  // if the user is eligible for clickhouse, and wants to use clickhouse, do so.
-  let trace;
+  const trace = await getTraceById({
+    traceId,
+    projectId,
+    timestamp: timestamp ?? undefined,
+    fromTimestamp: fromTimestamp ?? undefined,
+  });
 
-  if (
-    result.data.queryClickhouse === true &&
-    isClickhouseEligible(ctx.session?.user)
-  ) {
-    logger.info(
-      `Querying Clickhouse for traceid: ${traceId} and project: ${projectId} `,
-    );
-    trace = await getTraceByIdOrThrow(
-      traceId,
-      projectId,
-      timestamp ?? undefined,
-    );
-  } else {
-    trace = await prisma.trace.findFirst({
-      where: {
-        id: traceId,
-        projectId: projectId,
-      },
-      select: {
-        public: true,
-      },
-    });
-  }
-
-  if (!trace)
+  if (!trace) {
+    logger.error(`Trace with id ${traceId} not found for project ${projectId}`);
     throw new TRPCError({
       code: "NOT_FOUND",
       message: "Trace not found",
     });
+  }
 
   const sessionProject = ctx.session?.user?.organizations
     .flatMap((org) => org.projects)
     .find(({ id }) => id === projectId);
 
-  if (!trace.public && !sessionProject && ctx.session?.user?.admin !== true)
+  const traceSession = !!trace.sessionId
+    ? await ctx.prisma.traceSession.findFirst({
+        where: {
+          id: trace.sessionId,
+          projectId,
+        },
+        select: {
+          public: true,
+        },
+      })
+    : null;
+
+  const isSessionPublic = traceSession?.public === true;
+
+  if (
+    !trace.public &&
+    !sessionProject &&
+    !isSessionPublic &&
+    ctx.session?.user?.admin !== true
+  ) {
+    logger.error(
+      `User ${ctx.session?.user?.id} is not a member of project ${projectId}`,
+    );
     throw new TRPCError({
       code: "UNAUTHORIZED",
       message:
         "User is not a member of this project and this trace is not public",
     });
-
+  }
   return next({
     ctx: {
       session: {
@@ -389,6 +417,7 @@ const enforceTraceAccess = t.middleware(async ({ ctx, rawInput, next }) => {
         projectRole:
           ctx.session?.user?.admin === true ? Role.OWNER : sessionProject?.role,
       },
+      trace: trace, // pass the trace to the next middleware so we do not need to fetch it again
     },
   });
 });
@@ -406,7 +435,6 @@ export const protectedGetTraceProcedure = withOtelTracingProcedure
 const inputSessionSchema = z.object({
   sessionId: z.string(),
   projectId: z.string(),
-  queryClickhouse: z.boolean().nullish(),
 });
 
 const enforceSessionAccess = t.middleware(async ({ ctx, rawInput, next }) => {
@@ -430,11 +458,15 @@ const enforceSessionAccess = t.middleware(async ({ ctx, rawInput, next }) => {
     },
   });
 
-  if (!session)
+  if (!session) {
+    logger.error(
+      `Session with id ${sessionId} not found for project ${projectId}`,
+    );
     throw new TRPCError({
       code: "NOT_FOUND",
       message: "Session not found",
     });
+  }
 
   const userSessionProject = ctx.session?.user?.organizations
     .flatMap((org) => org.projects)
@@ -444,12 +476,16 @@ const enforceSessionAccess = t.middleware(async ({ ctx, rawInput, next }) => {
     !session.public &&
     !userSessionProject &&
     ctx.session?.user?.admin !== true
-  )
+  ) {
+    logger.error(
+      `User ${ctx.session?.user?.id} is not a member of project ${projectId}`,
+    );
     throw new TRPCError({
       code: "UNAUTHORIZED",
       message:
         "User is not a member of this project and this session is not public",
     });
+  }
 
   return next({
     ctx: {

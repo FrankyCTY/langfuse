@@ -1,7 +1,14 @@
-import { UiColumnMapping } from ".";
+import { UiColumnMappings } from ".";
 
-export const sessionCols: UiColumnMapping[] = [
-  // we do not access the traces scores in clichouse. We default back to the trace timestamps.
+export const sessionCols: UiColumnMappings = [
+  // we do not access the traces scores in ClickHouse. We default back to the trace timestamps.
+
+  {
+    uiTableName: "⭐️",
+    uiTableId: "bookmarked",
+    clickhouseTableName: "traces",
+    clickhouseSelect: "bookmarked",
+  },
   {
     uiTableName: "Created At",
     uiTableId: "createdAt",
@@ -15,10 +22,18 @@ export const sessionCols: UiColumnMapping[] = [
     clickhouseSelect: "user_ids",
   },
   {
+    uiTableName: "Environment",
+    uiTableId: "environment",
+    clickhouseTableName: "traces",
+    clickhouseSelect: "environment",
+  },
+  {
     uiTableName: "Session Duration",
     uiTableId: "sessionDuration",
     clickhouseTableName: "traces",
     clickhouseSelect: "duration",
+    // If we use the default of Decimal64(12), we cannot filter for more than ~40min due to an overflow
+    clickhouseTypeOverwrite: "Decimal64(3)",
   },
   {
     uiTableName: "Count Traces",
@@ -49,36 +64,43 @@ export const sessionCols: UiColumnMapping[] = [
     uiTableId: "inputTokens",
     clickhouseTableName: "traces",
     clickhouseSelect: "session_input_usage",
+    clickhouseTypeOverwrite: "Decimal64(3)",
   },
   {
     uiTableName: "Output Tokens",
     uiTableId: "outputTokens",
     clickhouseTableName: "traces",
     clickhouseSelect: "session_output_usage",
+    clickhouseTypeOverwrite: "Decimal64(3)",
   },
   {
     uiTableName: "Total Tokens",
     uiTableId: "totalTokens",
     clickhouseTableName: "traces",
     clickhouseSelect: "session_total_usage",
+    clickhouseTypeOverwrite: "Decimal64(3)",
   },
   {
     uiTableName: "Usage",
     uiTableId: "totalTokens",
     clickhouseTableName: "traces",
     clickhouseSelect: "session_total_usage",
+    clickhouseTypeOverwrite: "Decimal64(3)",
   },
   {
     uiTableName: "Session Total Usage",
     uiTableId: "usage",
     clickhouseTableName: "traces",
     clickhouseSelect: "session_total_usage",
+    clickhouseTypeOverwrite: "Decimal64(3)",
   },
   {
     uiTableName: "Session Duration (s)",
     uiTableId: "sessionDuration",
     clickhouseTableName: "traces",
     clickhouseSelect: "duration",
+    // If we use the default of Decimal64(12), we cannot filter for more than ~40min due to an overflow
+    clickhouseTypeOverwrite: "Decimal64(3)",
   },
   {
     uiTableName: "Traces Count",
@@ -109,5 +131,11 @@ export const sessionCols: UiColumnMapping[] = [
     uiTableId: "traceTags",
     clickhouseTableName: "traces",
     clickhouseSelect: "trace_tags",
+  },
+  {
+    uiTableName: "ID",
+    uiTableId: "id",
+    clickhouseTableName: "traces",
+    clickhouseSelect: "session_id",
   },
 ];

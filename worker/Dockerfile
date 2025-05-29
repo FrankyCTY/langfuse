@@ -45,20 +45,26 @@ COPY --from=pruner /app/out/full/ .
 
 RUN turbo run build --filter=worker...
 
-
-
 FROM --platform=${TARGETPLATFORM:-linux/amd64} base AS runner
+
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
 
 RUN apk add --no-cache dumb-init
 
 WORKDIR /app
 
+ARG NEXT_PUBLIC_BUILD_ID
+ENV BUILD_ID=$NEXT_PUBLIC_BUILD_ID
+
 ENV NODE_ENV production
 ENV DOCKER_BUILD 0
 
 # Don't run production as root
-RUN addgroup --system --gid 1001 expressjs
-RUN adduser --system --uid 1001 expressjs
+ARG UID=1001
+ARG GID=1001
+RUN addgroup --system --gid ${GID} expressjs
+RUN adduser --system --uid ${UID} expressjs
 USER expressjs
 COPY --from=builder --chown=expressjs:expressjs /app .
 COPY --chown=expressjs:expressjs ./worker/entrypoint.sh ./worker/entrypoint.sh
@@ -67,6 +73,8 @@ RUN chmod +x ./worker/entrypoint.sh
 EXPOSE 3030
 ENV PORT=3030
 
+# Docker ENTRYPOINT (dumb-init) is covered by semantic versioning, not the entrypoint.sh itself
+# Reasoning: ENTRYPOINT is overridden by some self-hosted deployments, thus changing this is breaking
 ENTRYPOINT ["dumb-init", "--", "./worker/entrypoint.sh"]
 
 # startup command

@@ -11,22 +11,25 @@ import { env } from "./src/env.mjs";
  * img-src https to allow loading images from SSO providers
  */
 const cspHeader = `
-  default-src 'self' https://*.langfuse.com https://*.langfuse.dev https://*.posthog.com https://*.sentry.io wss://*.crisp.chat https://*.crisp.chat;
-  script-src 'self' 'unsafe-eval' 'unsafe-inline' https://*.langfuse.com https://*.langfuse.dev https://client.crisp.chat https://settings.crisp.chat https://challenges.cloudflare.com https://*.sentry.io  https://static.cloudflareinsights.com https://*.stripe.com;
-  style-src 'self' 'unsafe-inline' https://client.crisp.chat;
-  img-src 'self' https: blob: data: https://client.crisp.chat https://image.crisp.chat https://storage.crisp.chat;
-  font-src 'self' https://client.crisp.chat;
-  frame-src 'self' https://challenges.cloudflare.com https://*.stripe.com https://game.crisp.chat;
+  default-src 'self' https://*.langfuse.com https://*.langfuse.dev https://*.posthog.com https://*.sentry.io;
+  script-src 'self' 'unsafe-eval' 'unsafe-inline' https://*.langfuse.com https://*.langfuse.dev https://challenges.cloudflare.com https://*.sentry.io  https://static.cloudflareinsights.com https://*.stripe.com https://uptime.betterstack.com https://chat.cdn-plain.com;
+  style-src 'self' 'unsafe-inline' https://uptime.betterstack.com https://fonts.googleapis.com;
+  img-src 'self' https: blob: data: http://localhost:*;
+  font-src 'self';
+  frame-src 'self' https://challenges.cloudflare.com https://*.stripe.com;
   worker-src 'self' blob:;
   object-src 'none';
   base-uri 'self';
   form-action 'self';
   frame-ancestors 'none';
-  connect-src 'self' https://*.langfuse.com https://*.langfuse.dev https://client.crisp.chat https://storage.crisp.chat wss://client.relay.crisp.chat wss://stream.relay.crisp.chat https://*.ingest.us.sentry.io;
-  media-src 'self' https://client.crisp.chat;
+  connect-src 'self' https://*.langfuse.com https://*.langfuse.dev https://*.ingest.us.sentry.io https://*.sentry.io https://uptime.betterstack.com https://chat.uk.plain.com;
+  media-src 'self' https: http://localhost:*;
   ${env.LANGFUSE_CSP_ENFORCE_HTTPS === "true" ? "upgrade-insecure-requests; block-all-mixed-content;" : ""}
   ${env.SENTRY_CSP_REPORT_URI ? `report-uri ${env.SENTRY_CSP_REPORT_URI}; report-to csp-endpoint;` : ""}
 `;
+
+// Match rules for Hugging Face
+const huggingFaceHosts = ["huggingface.co", ".*\\.hf\\.space$"];
 
 const reportToHeader = {
   key: "Report-To",
@@ -44,7 +47,8 @@ const reportToHeader = {
 
 /** @type {import("next").NextConfig} */
 const nextConfig = {
-  transpilePackages: ["@langfuse/shared"],
+  staticPageGenerationTimeout: 500, // default is 60. Required for build process for amd
+  transpilePackages: ["@langfuse/shared", "vis-network/standalone"],
   reactStrictMode: true,
   experimental: {
     instrumentationHook: true,
@@ -76,12 +80,18 @@ const nextConfig = {
   async headers() {
     return [
       {
-        source: "/:path*",
+        // Add noindex for all pages except root and /auth*
+        source: "/:path((?!auth|^$).*)*",
         headers: [
           {
-            key: "x-frame-options",
-            value: "SAMEORIGIN",
+            key: "X-Robots-Tag",
+            value: "noindex",
           },
+        ],
+      },
+      {
+        source: "/:path*",
+        headers: [
           {
             key: "X-Content-Type-Options",
             value: "nosniff",
@@ -91,12 +101,31 @@ const nextConfig = {
             value: "strict-origin-when-cross-origin",
           },
           {
+            key: "Document-Policy",
+            value: "js-profiling",
+          },
+          {
             key: "Permissions-Policy",
             value: "autoplay=*, fullscreen=*, microphone=*",
           },
           ...(env.SENTRY_CSP_REPORT_URI ? [reportToHeader] : []),
         ],
       },
+      {
+        source: "/:path*",
+        headers: [
+          {
+            key: "x-frame-options",
+            value: "SAMEORIGIN",
+          },
+        ],
+        // Disable x-frame-options on Hugging Face to allow for embedded use of Langfuse
+        missing: huggingFaceHosts.map((host) => ({
+          type: "host",
+          value: host,
+        })),
+      },
+      // CSP header
       {
         source: "/:path((?!api).*)*",
         headers: [
@@ -105,6 +134,11 @@ const nextConfig = {
             value: cspHeader.replace(/\n/g, ""),
           },
         ],
+        // Disable CSP on Hugging Face to allow for embedded use of Langfuse
+        missing: huggingFaceHosts.map((host) => ({
+          type: "host",
+          value: host,
+        })),
       },
       // Required to check authentication status from langfuse.com
       ...(env.NEXT_PUBLIC_LANGFUSE_CLOUD_REGION !== undefined
@@ -149,6 +183,9 @@ const nextConfig = {
       asyncWebAssembly: true,
       layers: true,
     };
+
+    // Exclude Datadog packages from webpack bundling to avoid issues
+    config.externals.push("@datadog/pprof", "dd-trace");
 
     return config;
   },

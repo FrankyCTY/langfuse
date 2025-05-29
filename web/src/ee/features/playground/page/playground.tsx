@@ -2,6 +2,8 @@ import { ModelParameters } from "@/src/components/ModelParameters";
 import { usePlaygroundContext } from "./context";
 import { Variables } from "./components/Variables";
 import { Messages } from "./components/Messages";
+import { PlaygroundTools } from "./components/PlaygroundTools";
+import { StructuredOutputSchemaSection } from "./components/StructuredOutputSchemaSection";
 
 export default function Playground() {
   const playgroundContext = usePlaygroundContext();
@@ -11,12 +13,18 @@ export default function Playground() {
       <div className="h-full basis-3/4 overflow-auto">
         <Messages {...playgroundContext} />
       </div>
-      <div className="h-full basis-1/4 pr-2">
-        <div className="flex h-full flex-col">
-          <div className="basis-[55%]">
-            <ModelParameters {...playgroundContext} evalModelsOnly={false} />
+      <div className="max-h-full min-h-0 basis-1/4 pr-2">
+        <div className="flex h-full flex-col gap-4 overflow-auto">
+          <div className="mb-4 flex-shrink-0 overflow-y-auto">
+            <ModelParameters {...playgroundContext} />
           </div>
-          <div className="mt-4 basis-[45%] overflow-auto">
+          <div className="mb-4 max-h-[25vh] flex-shrink-0 overflow-y-auto">
+            <PlaygroundTools />
+          </div>
+          <div className="mb-4 flex-shrink-0">
+            <StructuredOutputSchemaSection />
+          </div>
+          <div className="flex-grow overflow-y-auto">
             <Variables />
           </div>
         </div>

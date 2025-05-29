@@ -1,5 +1,6 @@
 import {
   jsonSchema,
+  publicApiPaginationZod,
   paginationZod,
   paginationMetaResponseZod,
   queryStringZod,
@@ -101,7 +102,7 @@ export const PostDatasetsV2Response = APIDataset.strict();
 
 // GET /v2/datasets
 export const GetDatasetsV2Query = z.object({
-  ...paginationZod,
+  ...publicApiPaginationZod,
 });
 export const GetDatasetsV2Response = z
   .object({
@@ -119,7 +120,7 @@ export const GetDatasetV2Response = APIDataset.strict();
 // GET /datasets/{name}/runs
 export const GetDatasetRunsV1Query = z.object({
   name: queryStringZod, // dataset name from URL, name as it is v1
-  ...paginationZod,
+  ...publicApiPaginationZod,
 });
 export const GetDatasetRunsV1Response = z
   .object({
@@ -140,9 +141,9 @@ export const GetDatasetRunV1Response = APIDatasetRun.extend({
 // POST /dataset-items
 export const PostDatasetItemsV1Body = z.object({
   datasetName: z.string(),
-  input: jsonSchema.nullish(),
-  expectedOutput: jsonSchema.nullish(),
-  metadata: jsonSchema.nullish(),
+  input: z.any().nullish(),
+  expectedOutput: z.any().nullish(),
+  metadata: z.any().nullish(),
   id: z.string().nullish(),
   sourceTraceId: z.string().nullish(),
   sourceObservationId: z.string().nullish(),
@@ -155,7 +156,7 @@ export const GetDatasetItemsV1Query = z.object({
   datasetName: z.string().nullish(),
   sourceTraceId: z.string().nullish(),
   sourceObservationId: z.string().nullish(),
-  ...paginationZod,
+  ...publicApiPaginationZod,
 });
 export const GetDatasetItemsV1Response = z
   .object({
@@ -169,6 +170,16 @@ export const GetDatasetItemV1Query = z.object({
   datasetItemId: z.string(),
 });
 export const GetDatasetItemV1Response = APIDatasetItem.strict();
+
+// DELETE /dataset-items/{datasetItemId}
+export const DeleteDatasetItemV1Query = z.object({
+  datasetItemId: z.string(),
+});
+export const DeleteDatasetItemV1Response = z
+  .object({
+    message: z.literal("Dataset item successfully deleted"),
+  })
+  .strict();
 
 // POST /dataset-run-items
 export const PostDatasetRunItemsV1Body = z
@@ -186,6 +197,19 @@ export const PostDatasetRunItemsV1Body = z
     path: ["observationId", "traceId"], // Specify the path of the error
   });
 export const PostDatasetRunItemsV1Response = APIDatasetRunItem.strict();
+
+// GET /dataset-run-items
+export const GetDatasetRunItemsV1Query = z.object({
+  datasetId: z.string(),
+  runName: z.string(),
+  ...publicApiPaginationZod,
+});
+export const GetDatasetRunItemsV1Response = z
+  .object({
+    data: z.array(APIDatasetRunItem),
+    meta: paginationMetaResponseZod,
+  })
+  .strict();
 
 /**
  * Deprecated endpoints replaced with v2, available for backward compatibility
@@ -226,3 +250,14 @@ export const GetDatasetV1Response = APIDataset.extend({
   items: z.array(APIDatasetItem),
   runs: z.array(z.string()), // dataset run names
 }).strict();
+
+// DELETE /datasets/{name}/runs/{runName}
+export const DeleteDatasetRunV1Query = z.object({
+  name: queryStringZod, // dataset name from URL
+  runName: queryStringZod,
+});
+export const DeleteDatasetRunV1Response = z
+  .object({
+    message: z.literal("Dataset run successfully deleted"),
+  })
+  .strict();

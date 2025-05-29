@@ -1,8 +1,9 @@
 import {
-  type OptionsDefinition,
   type ColumnDefinition,
   ScoreSource,
   ScoreDataType,
+  formatColumnOptions,
+  type SingleValueOption,
 } from "@langfuse/shared";
 
 export const scoresTableCols: ColumnDefinition[] = [
@@ -61,13 +62,6 @@ export const scoresTableCols: ColumnDefinition[] = [
     nullable: true,
   },
   {
-    name: "Eval Configuration ID",
-    id: "jobConfigurationId",
-    type: "string",
-    internal: 'je."job_configuration_id"',
-    nullable: true,
-  },
-  {
     name: "Trace Tags",
     id: "tags",
     type: "arrayOptions",
@@ -78,8 +72,8 @@ export const scoresTableCols: ColumnDefinition[] = [
 ];
 
 export type ScoreOptions = {
-  name: Array<OptionsDefinition>;
-  tags: Array<OptionsDefinition>;
+  name: Array<SingleValueOption>;
+  tags: Array<SingleValueOption>;
 };
 
 export function scoresTableColsWithOptions(
@@ -87,10 +81,10 @@ export function scoresTableColsWithOptions(
 ): ColumnDefinition[] {
   return scoresTableCols.map((col) => {
     if (col.id === "name") {
-      return { ...col, options: options?.name ?? [] };
+      return formatColumnOptions(col, options?.name ?? []);
     }
     if (col.id === "tags") {
-      return { ...col, options: options?.tags ?? [] };
+      return formatColumnOptions(col, options?.tags ?? []);
     }
     return col;
   });

@@ -4,6 +4,7 @@ export const filterOperators = {
   datetime: [">", "<", ">=", "<="],
   string: ["=", "contains", "does not contain", "starts with", "ends with"],
   stringOptions: ["any of", "none of"],
+  categoryOptions: ["any of", "none of"],
   arrayOptions: ["any of", "none of", "all of"],
   number: ["=", ">", "<", ">=", "<="],
   stringObject: [
@@ -15,6 +16,7 @@ export const filterOperators = {
   ],
   numberObject: ["=", ">", "<", ">=", "<="],
   boolean: ["=", "<>"],
+  null: ["is null", "is not null"],
 } as const;
 
 export const timeFilter = z.object({
@@ -68,13 +70,28 @@ export const booleanFilter = z.object({
   operator: z.enum(filterOperators.boolean),
   value: z.boolean(),
 });
+export const nullFilter = z.object({
+  type: z.literal("null"),
+  column: z.string(),
+  operator: z.enum(filterOperators.null),
+  value: z.literal(""),
+});
+export const categoryOptionsFilter = z.object({
+  type: z.literal("categoryOptions"),
+  column: z.string(),
+  key: z.string(),
+  operator: z.enum(filterOperators.categoryOptions),
+  value: z.array(z.string()),
+});
 export const singleFilter = z.discriminatedUnion("type", [
   timeFilter,
   stringFilter,
   numberFilter,
   stringOptionsFilter,
+  categoryOptionsFilter,
   arrayOptionsFilter,
   stringObjectFilter,
   numberObjectFilter,
   booleanFilter,
+  nullFilter,
 ]);

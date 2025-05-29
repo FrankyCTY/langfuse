@@ -1,10 +1,11 @@
 import {
   ScoreBodyWithoutConfig,
+  ScoreDomain,
   ScorePropsAgainstConfig,
   validateDbScoreConfigSafe,
   ValidatedScoreConfig,
 } from "../../../src";
-import { prisma, Score, ScoreDataType } from "../../db";
+import { prisma, ScoreDataType } from "../../db";
 
 import { InvalidRequestError, LangfuseNotFoundError } from "../../errors";
 
@@ -16,8 +17,8 @@ type ValidateAndInflateScoreParams = {
 
 export async function validateAndInflateScore(
   params: ValidateAndInflateScoreParams,
-): Promise<Score> {
-  const { body, projectId } = params;
+): Promise<ScoreDomain> {
+  const { body, projectId, scoreId } = params;
 
   if (body.configId) {
     const config = await prisma.scoreConfig.findFirst({
@@ -32,10 +33,22 @@ export async function validateAndInflateScore(
         "The configId you provided does not match a valid config in this project",
       );
 
-    validateConfigAgainstBody(body, config as ValidatedScoreConfig);
+    // Override some fields in the score body with config fields
+    // We ignore the set fields in the body
+    const bodyWithConfigOverrides = {
+      ...body,
+      name: config.name,
+    };
+
+    validateConfigAgainstBody(
+      bodyWithConfigOverrides,
+      config as ValidatedScoreConfig,
+    );
 
     return inflateScoreBody({
-      ...params,
+      projectId,
+      scoreId,
+      body: bodyWithConfigOverrides,
       config: config as ValidatedScoreConfig,
     });
   }
@@ -72,11 +85,11 @@ function mapStringValueToNumericValue(
 
 function inflateScoreBody(
   params: ValidateAndInflateScoreParams & { config?: ValidatedScoreConfig },
-): Score {
+): ScoreDomain {
   const { body, projectId, scoreId, config } = params;
 
   const relevantDataType = config?.dataType ?? body.dataType;
-  const scoreProps = { ...body, id: scoreId, projectId, source: "API" };
+  const scoreProps = { source: "API", ...body, id: scoreId, projectId };
 
   if (typeof body.value === "number") {
     if (relevantDataType && relevantDataType === ScoreDataType.BOOLEAN) {

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/src/components/ui/button";
 import { LockIcon, SquarePen, LoaderCircle } from "lucide-react";
 import {
@@ -8,42 +8,42 @@ import {
   DrawerTitle,
   DrawerTrigger,
 } from "@/src/components/ui/drawer";
-import { type APIScore } from "@langfuse/shared";
 import { api } from "@/src/utils/api";
 import Header from "@/src/components/layouts/header";
 import { usePostHogClientCapture } from "@/src/features/posthog-analytics/usePostHogClientCapture";
 import { useHasProjectAccess } from "@/src/features/rbac/utils/checkProjectAccess";
 import { AnnotateDrawerContent } from "@/src/features/scores/components/AnnotateDrawerContent";
+import { useIsMutating } from "@tanstack/react-query";
+import { z } from "zod";
+import { type AnnotateDrawerProps } from "@/src/features/scores/types";
+import { type ScoreTarget } from "@/src/features/scores/types";
+import { formatAnnotateDescription } from "@/src/features/scores/lib/helpers";
 
-export function AnnotateDrawer({
-  traceId,
+const mutationKeySchema = z.array(z.array(z.string()));
+
+export function AnnotateDrawer<Target extends ScoreTarget>({
+  scoreTarget,
   scores,
   emptySelectedConfigIds,
   setEmptySelectedConfigIds,
-  observationId,
   projectId,
+  analyticsData = {
+    type: "trace",
+    source: "TraceDetail",
+  },
   variant = "button",
-  type = "trace",
-  source = "TraceDetail",
+  buttonVariant = "secondary",
   hasGroupedButton = false,
-}: {
-  traceId: string;
-  scores: APIScore[];
-  emptySelectedConfigIds: string[];
-  setEmptySelectedConfigIds: (ids: string[]) => void;
-  observationId?: string;
-  projectId: string;
-  variant?: "button" | "badge";
-  type?: "trace" | "observation" | "session";
-  source?: "TraceDetail" | "SessionDetail";
-  hasGroupedButton?: boolean;
-}) {
+  environment,
+}: AnnotateDrawerProps<Target>) {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [showSaving, setShowSaving] = useState(false);
   const capture = usePostHogClientCapture();
   const hasAccess = useHasProjectAccess({
     projectId,
     scope: "scores:CUD",
   });
+  const description = formatAnnotateDescription(scoreTarget);
 
   const configsData = api.scoreConfigs.all.useQuery(
     {
@@ -56,6 +56,38 @@ export function AnnotateDrawer({
 
   const configs = configsData.data?.configs ?? [];
 
+  // Validate if any of the scores mutations are in progress
+  const isMutating = useIsMutating({
+    predicate: (mutation) => {
+      const mutationKey = mutation.options.mutationKey;
+
+      const parsedMutationKey = mutationKeySchema.safeParse(mutationKey);
+      if (!parsedMutationKey.success) return false;
+
+      for (const key of parsedMutationKey.data) {
+        const parsedKey = key.join(".");
+        if (parsedKey === "scores.createAnnotationScore") return true;
+        if (parsedKey === "scores.updateAnnotationScore") return true;
+        if (parsedKey === "scores.deleteAnnotationScore") return true;
+      }
+
+      return false;
+    },
+  });
+
+  useEffect(() => {
+    if (isMutating > 0) {
+      setShowSaving(true);
+    } else {
+      // Add delay before setting showSaving to ensure loading state persists for a short time after the mutation key indicates completion, allowing for any pending operations to finish
+      const timer = setTimeout(() => {
+        setShowSaving(false);
+      }, 500); // 500ms delay
+
+      return () => clearTimeout(timer);
+    }
+  }, [isMutating]);
+
   if (!hasAccess && variant === "badge") return null;
 
   return (
@@ -63,8 +95,8 @@ export function AnnotateDrawer({
       <DrawerTrigger asChild>
         {variant === "button" ? (
           <Button
-            variant="secondary"
-            disabled={!hasAccess}
+            variant={buttonVariant}
+            disabled={!hasAccess || showSaving}
             className={hasGroupedButton ? "rounded-r-none" : ""}
             onClick={() => {
               setIsDrawerOpen(true);
@@ -72,15 +104,14 @@ export function AnnotateDrawer({
                 Boolean(scores.length)
                   ? "score:update_form_open"
                   : "score:create_form_open",
-                {
-                  type: type,
-                  source: source,
-                },
+                analyticsData,
               );
             }}
           >
             {!hasAccess ? (
               <LockIcon className="mr-1.5 h-3 w-3" />
+            ) : showSaving ? (
+              <LoaderCircle className="mr-1.5 h-4 w-4 animate-spin text-muted-foreground" />
             ) : (
               <SquarePen className="mr-1.5 h-4 w-4" />
             )}
@@ -89,17 +120,14 @@ export function AnnotateDrawer({
         ) : (
           <Button
             className="h-6 rounded-full px-3 text-xs"
-            disabled={!hasAccess}
+            disabled={!hasAccess || showSaving}
             onClick={() => {
               setIsDrawerOpen(true);
               capture(
                 Boolean(scores.length)
                   ? "score:update_form_open"
                   : "score:create_form_open",
-                {
-                  type: type,
-                  source: source,
-                },
+                analyticsData,
               );
             }}
           >
@@ -107,15 +135,14 @@ export function AnnotateDrawer({
           </Button>
         )}
       </DrawerTrigger>
-      <DrawerContent className="h-1/3">
+      <DrawerContent>
         {configsData.isLoading ? (
           <DrawerHeader className="sticky top-0 z-10 rounded-sm bg-background">
             <DrawerTitle>
               <Header
                 title="Annotate"
-                level="h3"
                 help={{
-                  description: `Annotate ${observationId ? "observation" : "trace"} with scores to capture human evaluation across different dimensions.`,
+                  description,
                   href: "https://langfuse.com/docs/scores/manually",
                 }}
               ></Header>
@@ -129,15 +156,17 @@ export function AnnotateDrawer({
           </DrawerHeader>
         ) : (
           <AnnotateDrawerContent
-            traceId={traceId}
             scores={scores}
+            scoreTarget={scoreTarget}
             configs={configs}
             emptySelectedConfigIds={emptySelectedConfigIds}
             setEmptySelectedConfigIds={setEmptySelectedConfigIds}
-            observationId={observationId}
             projectId={projectId}
-            type={type}
-            source={source}
+            analyticsData={analyticsData}
+            showSaving={showSaving}
+            setShowSaving={setShowSaving}
+            isDrawerOpen={isDrawerOpen}
+            environment={environment}
           />
         )}
       </DrawerContent>

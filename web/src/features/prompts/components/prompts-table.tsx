@@ -1,14 +1,9 @@
-import { LockIcon, PlusIcon } from "lucide-react";
-import Link from "next/link";
 import { useEffect } from "react";
-
 import { DataTable } from "@/src/components/table/data-table";
 import TableLink from "@/src/components/table/table-link";
 import { type LangfuseColumnDef } from "@/src/components/table/types";
-import { Button } from "@/src/components/ui/button";
 import { useDetailPageLists } from "@/src/features/navigate-detail-pages/context";
 import { DeletePrompt } from "@/src/features/prompts/components/delete-prompt";
-import { useHasProjectAccess } from "@/src/features/rbac/utils/checkProjectAccess";
 import useProjectIdFromURL from "@/src/hooks/useProjectIdFromURL";
 import { api } from "@/src/utils/api";
 import { type RouterOutput } from "@/src/utils/types";
@@ -19,10 +14,10 @@ import { useOrderByState } from "@/src/features/orderBy/hooks/useOrderByState";
 import { promptsTableColsWithOptions } from "@/src/server/api/definitions/promptsTable";
 import { NumberParam, useQueryParams, withDefault } from "use-query-params";
 import { createColumnHelper } from "@tanstack/react-table";
-import { usePostHogClientCapture } from "@/src/features/posthog-analytics/usePostHogClientCapture";
 import { joinTableCoreAndMetrics } from "@/src/components/table/utils/joinTableCoreAndMetrics";
 import { Skeleton } from "@/src/components/ui/skeleton";
 import { useDebounce } from "@/src/hooks/useDebounce";
+import { LocalIsoDate } from "@/src/components/LocalIsoDate";
 
 type PromptTableRow = {
   name: string;
@@ -37,11 +32,6 @@ type PromptTableRow = {
 export function PromptTable() {
   const projectId = useProjectIdFromURL();
   const { setDetailPageList } = useDetailPageLists();
-
-  const hasCUDAccess = useHasProjectAccess({
-    projectId,
-    scope: "prompts:CUD",
-  });
 
   const [filterState, setFilterState] = useQueryFilterState(
     [],
@@ -125,14 +115,13 @@ export function PromptTable() {
   );
   const filterOptionTags = promptFilterOptions.data?.tags ?? [];
   const allTags = filterOptionTags.map((t) => t.value);
-  const capture = usePostHogClientCapture();
   const totalCount = prompts.data?.totalCount ?? null;
 
   useEffect(() => {
     if (prompts.isSuccess) {
       setDetailPageList(
         "prompts",
-        prompts.data.prompts.map((t) => t.name),
+        prompts.data.prompts.map((t) => ({ id: t.name })),
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -180,11 +169,11 @@ export function PromptTable() {
       size: 200,
       cell: (row) => {
         const createdAt = row.getValue();
-        return createdAt.toLocaleString();
+        return <LocalIsoDate date={createdAt} />;
       },
     }),
     columnHelper.accessor("numberOfObservations", {
-      header: "Number of Generations",
+      header: "Number of Observations",
       size: 170,
       cell: (row) => {
         const numberOfObservations = row.getValue();
@@ -197,7 +186,7 @@ export function PromptTable() {
         }
         return (
           <TableLink
-            path={`/project/${projectId}/generations?filter=${numberOfObservations ? filter : ""}`}
+            path={`/project/${projectId}/observations?filter=${numberOfObservations ? filter : ""}`}
             value={numberOfObservations.toLocaleString()}
           />
         );
@@ -249,31 +238,6 @@ export function PromptTable() {
         filterState={filterState}
         setFilterState={useDebounce(setFilterState)}
         columnsWithCustomSelect={["labels", "tags"]}
-        actionButtons={
-          <Link href={`/project/${projectId}/prompts/new`}>
-            <Button
-              variant="secondary"
-              disabled={!hasCUDAccess}
-              aria-label="Create New Prompt"
-              onClick={() => {
-                capture("prompts:new_form_open");
-              }}
-            >
-              {hasCUDAccess ? (
-                <PlusIcon
-                  className="-ml-0.5 mr-1.5 h-4 w-4"
-                  aria-hidden="true"
-                />
-              ) : (
-                <LockIcon
-                  className="-ml-0.5 mr-1.5 h-3 w-3"
-                  aria-hidden="true"
-                />
-              )}
-              New prompt
-            </Button>
-          </Link>
-        }
       />
       <DataTable
         columns={promptColumns}

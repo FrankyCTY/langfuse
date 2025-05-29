@@ -1,4 +1,4 @@
-import Header from "@/src/components/layouts/header";
+import Page from "@/src/components/layouts/page";
 import { useRouter } from "next/router";
 import { Button } from "@/src/components/ui/button";
 import Link from "next/link";
@@ -6,7 +6,12 @@ import { useHasProjectAccess } from "@/src/features/rbac/utils/checkProjectAcces
 import { Lock, Plus } from "lucide-react";
 import EvalsTemplateTable from "@/src/ee/features/evals/components/eval-templates-table";
 import { usePostHogClientCapture } from "@/src/features/posthog-analytics/usePostHogClientCapture";
-import { Tabs, TabsList, TabsTrigger } from "@/src/components/ui/tabs";
+import {
+  TabsBar,
+  TabsBarList,
+  TabsBarTrigger,
+} from "@/src/components/ui/tabs-bar";
+import { ManageDefaultEvalModel } from "@/src/ee/features/evals/components/manage-default-eval-model";
 
 export default function TemplatesPage() {
   const router = useRouter();
@@ -14,7 +19,7 @@ export default function TemplatesPage() {
   const capture = usePostHogClientCapture();
   const hasWriteAccess = useHasProjectAccess({
     projectId,
-    scope: "evalTemplate:create",
+    scope: "evalTemplate:CUD",
   });
 
   const hasReadAccess = useHasProjectAccess({
@@ -27,54 +32,56 @@ export default function TemplatesPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-6rem)] flex-col overflow-hidden md:h-[calc(100vh-2rem)]">
-      <Header
-        title="Eval Templates"
-        help={{
-          description:
-            "Create an evaluation template. Choose from one of the pre-defined templates or create your own.",
+    <Page
+      headerProps={{
+        title: "LLM-as-a-Judge Evaluators",
+        help: {
+          description: "View all langfuse managed and custom evaluators.",
           href: "https://langfuse.com/docs/scores/model-based-evals",
-        }}
-        actionButtons={
-          <Button
-            disabled={!hasWriteAccess}
-            onClick={() => capture("eval_templates:new_form_open")}
-            asChild
-            variant="secondary"
-          >
-            <Link
-              href={
-                hasWriteAccess
-                  ? `/project/${projectId}/evals/templates/new`
-                  : "#"
-              }
+        },
+        tabsComponent: (
+          <TabsBar value="templates">
+            <TabsBarList>
+              <TabsBarTrigger value="configs" asChild>
+                <Link href={`/project/${projectId}/evals`}>
+                  Running Evaluators
+                </Link>
+              </TabsBarTrigger>
+              <TabsBarTrigger value="templates">
+                Evaluator Library
+              </TabsBarTrigger>
+            </TabsBarList>
+          </TabsBar>
+        ),
+        actionButtonsRight: (
+          <>
+            <ManageDefaultEvalModel projectId={projectId} />
+            <Button
+              disabled={!hasWriteAccess}
+              onClick={() => capture("eval_templates:new_form_open")}
+              asChild
+              variant="default"
             >
-              {hasWriteAccess ? (
-                <Plus className="mr-2 h-4 w-4" />
-              ) : (
-                <Lock className="mr-2 h-4 w-4" />
-              )}
-              New template
-            </Link>
-          </Button>
-        }
-      />
-      <EvalsTemplateTable
-        projectId={projectId}
-        menuItems={
-          <Tabs value="templates">
-            <TabsList>
-              <TabsTrigger value="evaluators" asChild>
-                <Link href={`/project/${projectId}/evals`}>Evaluators</Link>
-              </TabsTrigger>
-              <TabsTrigger value="templates">Templates</TabsTrigger>
-              <TabsTrigger value="log" asChild>
-                <Link href={`/project/${projectId}/evals/log`}>Log</Link>
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-        }
-      />
-    </div>
+              <Link
+                href={
+                  hasWriteAccess
+                    ? `/project/${projectId}/evals/templates/new`
+                    : "#"
+                }
+              >
+                {hasWriteAccess ? (
+                  <Plus className="mr-2 h-4 w-4" />
+                ) : (
+                  <Lock className="mr-2 h-4 w-4" />
+                )}
+                Custom Evaluator
+              </Link>
+            </Button>
+          </>
+        ),
+      }}
+    >
+      <EvalsTemplateTable projectId={projectId} />
+    </Page>
   );
 }

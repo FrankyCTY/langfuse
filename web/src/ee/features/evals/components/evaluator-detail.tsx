@@ -1,25 +1,28 @@
 import * as React from "react";
-import Header from "@/src/components/layouts/header";
-import { type RouterOutputs, api } from "@/src/utils/api";
+import { api } from "@/src/utils/api";
 import { useRouter } from "next/router";
-import { EvaluatorForm } from "@/src/ee/features/evals/components/evaluator-form";
-import { useHasProjectAccess } from "@/src/features/rbac/utils/checkProjectAccess";
-import { Button } from "@/src/components/ui/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/src/components/ui/popover";
-import { useState } from "react";
-import { Trash } from "lucide-react";
-import TableLink from "@/src/components/table/table-link";
 import EvalLogTable from "@/src/ee/features/evals/components/eval-log";
-import { usePostHogClientCapture } from "@/src/features/posthog-analytics/usePostHogClientCapture";
-import { FullScreenPage } from "@/src/components/layouts/full-screen-page";
-import { TableWithMetadataWrapper } from "@/src/components/table/TableWithMetadataWrapper";
 import { StatusBadge } from "@/src/components/layouts/status-badge";
 import { DetailPageNav } from "@/src/features/navigate-detail-pages/DetailPageNav";
-import { CardDescription } from "@/src/components/ui/card";
+import Page from "@/src/components/layouts/page";
+import { LevelCountsDisplay } from "@/src/components/level-counts-display";
+import {
+  type JobExecutionState,
+  generateJobExecutionCounts,
+} from "@/src/ee/features/evals/utils/job-execution-utils";
+
+const JobExecutionCounts = ({
+  jobExecutionsByState,
+}: {
+  jobExecutionsByState?: JobExecutionState[];
+}) => {
+  if (!jobExecutionsByState || jobExecutionsByState.length === 0) {
+    return null;
+  }
+
+  const counts = generateJobExecutionCounts(jobExecutionsByState);
+  return <LevelCountsDisplay counts={counts} />;
+};
 
 export const EvaluatorDetail = () => {
   const router = useRouter();
@@ -49,7 +52,7 @@ export const EvaluatorDetail = () => {
     allTemplates.isLoading ||
     !allTemplates.data
   ) {
-    return <div>Loading...</div>;
+    return <div className="p-3">Loading...</div>;
   }
 
   if (evaluator.data && evaluator.data.evalTemplate === null) {
@@ -58,154 +61,65 @@ export const EvaluatorDetail = () => {
 
   const existingEvaluator =
     evaluator.data && evaluator.data.evalTemplate
-      ? { ...evaluator.data, evalTemplate: evaluator.data.evalTemplate }
+      ? {
+          ...evaluator.data,
+          evalTemplate: evaluator.data.evalTemplate,
+        }
       : undefined;
 
   return (
-    <FullScreenPage>
-      <>
-        <Header
-          title={`${evaluator.data?.id}` ?? "Loading..."}
-          breadcrumb={[
-            {
-              name: "Evaluators",
-              href: `/project/${router.query.projectId as string}/evals`,
-            },
-            { name: evaluator.data?.id },
-          ]}
-          actionButtons={
-            <>
-              <DeactivateEvaluator
-                projectId={projectId}
-                evaluator={evaluator.data ?? undefined}
-                isLoading={evaluator.isLoading}
-              />
-              {evaluator.data && (
-                <DetailPageNav
-                  key="nav"
-                  currentId={encodeURIComponent(evaluator.data.id)}
-                  path={(id) =>
-                    `/project/${projectId}/evals/${encodeURIComponent(id)}`
-                  }
-                  listKey="evals"
-                />
-              )}
-            </>
-          }
-        />
-        {existingEvaluator && (
-          <TableWithMetadataWrapper
-            tableComponent={
-              <EvalLogTable
-                projectId={projectId}
-                jobConfigurationId={existingEvaluator.id}
-              />
-            }
-            cardTitleChildren={
-              <div className="flex w-full flex-row items-center justify-between">
-                <span>Evaluator</span>
-                <StatusBadge
-                  type={evaluator.data?.status.toLowerCase()}
-                  isLive
-                  className="max-h-8"
+    <Page
+      headerProps={{
+        title: evaluator.data
+          ? `${evaluator.data.scoreName}: ${evaluator.data.id}`
+          : "Loading...",
+        itemType: "EVALUATOR",
+        breadcrumb: [
+          {
+            name: "LLM-as-a-Judge Evaluators",
+            href: `/project/${router.query.projectId as string}/evals`,
+          },
+        ],
+
+        actionButtonsRight: (
+          <>
+            {evaluator.data?.jobExecutionsByState && (
+              <div className="flex flex-col items-center justify-center rounded-md bg-muted-gray px-2">
+                <JobExecutionCounts
+                  jobExecutionsByState={evaluator.data.jobExecutionsByState}
                 />
               </div>
-            }
-            cardContentChildren={
-              <>
-                <CardDescription className="flex items-center justify-between text-sm">
-                  <span className="text-sm font-medium">Eval Template</span>
-                  <TableLink
-                    path={`/project/${projectId}/evals/templates/${existingEvaluator.evalTemplateId}`}
-                    value={
-                      `${existingEvaluator.evalTemplate.name} (v${existingEvaluator.evalTemplate.version})` ??
-                      ""
-                    }
-                    className="flex min-h-6 items-center"
-                  />
-                </CardDescription>
-                <div className="flex w-full flex-col items-start justify-between space-y-2 pb-4">
-                  <EvaluatorForm
-                    key={existingEvaluator.id}
-                    projectId={projectId}
-                    evalTemplates={allTemplates.data?.templates}
-                    existingEvaluator={existingEvaluator}
-                    disabled={true}
-                    shouldWrapVariables={true}
-                  />
-                </div>
-              </>
-            }
-          />
-        )}
-      </>
-    </FullScreenPage>
+            )}
+            <StatusBadge
+              type={evaluator.data?.finalStatus.toLowerCase()}
+              isLive
+              className="max-h-8"
+            />
+
+            {evaluator.data && (
+              <DetailPageNav
+                key="nav"
+                currentId={encodeURIComponent(evaluator.data.id)}
+                path={(entry) =>
+                  `/project/${projectId}/evals/${encodeURIComponent(entry.id)}`
+                }
+                listKey="evals"
+              />
+            )}
+          </>
+        ),
+      }}
+    >
+      {existingEvaluator && (
+        <div className="grid flex-1 grid-cols-[1fr,auto] overflow-hidden contain-layout">
+          <div className="flex h-full flex-col overflow-hidden">
+            <EvalLogTable
+              projectId={projectId}
+              jobConfigurationId={existingEvaluator.id}
+            />
+          </div>
+        </div>
+      )}
+    </Page>
   );
 };
-
-export function DeactivateEvaluator({
-  projectId,
-  evaluator,
-  isLoading,
-}: {
-  projectId: string;
-  evaluator?: RouterOutputs["evals"]["configById"];
-  isLoading: boolean;
-}) {
-  const utils = api.useUtils();
-  const hasAccess = useHasProjectAccess({ projectId, scope: "evalJob:CUD" });
-  const [isOpen, setIsOpen] = useState(false);
-  const capture = usePostHogClientCapture();
-
-  const mutEvaluator = api.evals.updateEvalJob.useMutation({
-    onSuccess: () => {
-      void utils.evals.invalidate();
-    },
-  });
-
-  const onClick = () => {
-    if (!projectId) {
-      console.error("Project ID is missing");
-      return;
-    }
-    mutEvaluator.mutateAsync({
-      projectId,
-      evalConfigId: evaluator?.id ?? "",
-      updatedStatus: "INACTIVE",
-    });
-    capture("eval_config:delete");
-    setIsOpen(false);
-  };
-
-  return (
-    <Popover open={isOpen} onOpenChange={() => setIsOpen(!isOpen)}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          size={"icon"}
-          disabled={!hasAccess || evaluator?.status !== "ACTIVE"}
-          loading={isLoading}
-        >
-          <Trash className="h-5 w-5" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent>
-        <h2 className="text-md mb-3 font-semibold">Please confirm</h2>
-        <p className="mb-3 text-sm">
-          This action permanently deactivates the evaluator. No more traces will
-          be evaluated based on this evaluator.
-        </p>
-        <div className="flex justify-end space-x-4">
-          <Button
-            type="button"
-            variant="destructive"
-            loading={mutEvaluator.isLoading}
-            onClick={onClick}
-          >
-            Deactivate evaluator
-          </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}

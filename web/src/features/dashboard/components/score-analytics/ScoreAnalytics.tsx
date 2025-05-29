@@ -4,12 +4,13 @@ import { DashboardCard } from "@/src/features/dashboard/components/cards/Dashboa
 import { type FilterState } from "@langfuse/shared";
 import { type DashboardDateRangeAggregationOption } from "@/src/utils/date-range-utils";
 import { MultiSelectKeyValues } from "@/src/features/scores/components/multi-select-key-values";
-import React, { useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import { Separator } from "@/src/components/ui/separator";
 import {
   isBooleanDataType,
   isCategoricalDataType,
   isNumericDataType,
+  toOrderedScoresList,
 } from "@/src/features/scores/lib/helpers";
 import { getScoreDataTypeIcon } from "@/src/features/scores/components/ScoreDetailColumnHelpers";
 import { NumericScoreTimeSeriesChart } from "@/src/features/dashboard/components/score-analytics/NumericScoreTimeSeriesChart";
@@ -18,23 +19,28 @@ import { NumericScoreHistogram } from "@/src/features/dashboard/components/score
 import DocPopup from "@/src/components/layouts/doc-popup";
 import { NoDataOrLoading } from "@/src/components/NoDataOrLoading";
 import { Flex, Text } from "@tremor/react";
-import { useClickhouse } from "@/src/components/layouts/ClickhouseAdminToggle";
+import useLocalStorage from "@/src/components/useLocalStorage";
 
 export function ScoreAnalytics(props: {
   className?: string;
   agg: DashboardDateRangeAggregationOption;
   globalFilterState: FilterState;
+  fromTimestamp: Date;
+  toTimestamp: Date;
   projectId: string;
+  isLoading?: boolean;
 }) {
-  const [selectedDashboardScoreKeys, setSelectedDashboardScoreKeys] = useState<
-    string[]
-  >([]);
+  // Stale score selections in localStorage are ignored as we only show scores that exist in scoreAnalyticsOptions
+  const [selectedDashboardScoreKeys, setSelectedDashboardScoreKeys] =
+    useLocalStorage<string[]>(
+      `selectedDashboardScoreKeys-${props.projectId}`,
+      [],
+    );
 
   const scoreKeysAndProps = api.scores.getScoreKeysAndProps.useQuery(
     {
       projectId: props.projectId,
       selectedTimeOption: { option: props.agg, filterSource: "DASHBOARD" },
-      queryClickhouse: useClickhouse(),
     },
     {
       trpc: {
@@ -42,15 +48,19 @@ export function ScoreAnalytics(props: {
           skipBatch: true,
         },
       },
+      enabled: !props.isLoading,
     },
   );
 
   const { scoreAnalyticsOptions, scoreKeyToData } = useMemo(() => {
-    const scoreAnalyticsOptions =
-      scoreKeysAndProps.data?.map(({ key, name, dataType, source }) => ({
-        key,
-        value: `${getScoreDataTypeIcon(dataType)} ${name} (${source.toLowerCase()})`,
-      })) ?? [];
+    const scoreAnalyticsOptions = scoreKeysAndProps.data
+      ? toOrderedScoresList(scoreKeysAndProps.data).map(
+          ({ key, name, dataType, source }) => ({
+            key,
+            value: `${getScoreDataTypeIcon(dataType)} ${name} (${source.toLowerCase()})`,
+          }),
+        )
+      : [];
 
     return {
       scoreAnalyticsOptions,
@@ -69,10 +79,11 @@ export function ScoreAnalytics(props: {
       className={props.className}
       title="Scores Analytics"
       description="Aggregate scores and averages over time"
-      isLoading={scoreKeysAndProps.isLoading}
+      isLoading={props.isLoading || scoreKeysAndProps.isLoading}
       headerClassName={"grid grid-cols-[1fr,auto,auto] items-center"}
       headerChildren={
         !scoreKeysAndProps.isLoading &&
+        !props.isLoading &&
         Boolean(scoreKeysAndProps.data?.length) && (
           <MultiSelectKeyValues
             placeholder="Search score..."
@@ -120,22 +131,22 @@ export function ScoreAnalytics(props: {
                         <DocPopup description="Aggregate of up to 10,000 scores" />
                       )}
                     </div>
-                    {(isCategoricalDataType(dataType) ||
-                      isBooleanDataType(dataType)) && (
+                    {isCategoricalDataType(dataType) && (
                       <CategoricalScoreChart
-                        source={source}
-                        name={name}
-                        dataType={dataType}
                         projectId={props.projectId}
+                        scoreData={scoreData}
                         globalFilterState={props.globalFilterState}
+                        fromTimestamp={props.fromTimestamp}
+                        toTimestamp={props.toTimestamp}
                       />
                     )}
-                    {isNumericDataType(dataType) && (
+                    {(isNumericDataType(dataType) ||
+                      isBooleanDataType(dataType)) && (
                       <NumericScoreHistogram
+                        projectId={props.projectId}
                         source={source}
                         name={name}
                         dataType={dataType}
-                        projectId={props.projectId}
                         globalFilterState={props.globalFilterState}
                       />
                     )}
@@ -147,18 +158,18 @@ export function ScoreAnalytics(props: {
                         ? "Moving average over time"
                         : "Scores over time"}
                     </div>
-                    {(isCategoricalDataType(dataType) ||
-                      isBooleanDataType(dataType)) && (
+                    {isCategoricalDataType(dataType) && (
                       <CategoricalScoreChart
-                        agg={props.agg}
-                        source={source}
-                        name={name}
-                        dataType={dataType}
                         projectId={props.projectId}
+                        agg={props.agg}
+                        scoreData={scoreData}
                         globalFilterState={props.globalFilterState}
+                        fromTimestamp={props.fromTimestamp}
+                        toTimestamp={props.toTimestamp}
                       />
                     )}
-                    {isNumericDataType(dataType) && (
+                    {(isNumericDataType(dataType) ||
+                      isBooleanDataType(dataType)) && (
                       <NumericScoreTimeSeriesChart
                         agg={props.agg}
                         source={source}
@@ -166,6 +177,8 @@ export function ScoreAnalytics(props: {
                         dataType={dataType}
                         projectId={props.projectId}
                         globalFilterState={props.globalFilterState}
+                        fromTimestamp={props.fromTimestamp}
+                        toTimestamp={props.toTimestamp}
                       />
                     )}
                   </div>

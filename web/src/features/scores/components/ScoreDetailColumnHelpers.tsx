@@ -1,31 +1,28 @@
 import { ScoresTableCell } from "@/src/components/scores-table-cell";
 import { type LangfuseColumnDef } from "@/src/components/table/types";
-import { type GenerationsTableRow } from "@/src/components/table/use-cases/generations";
+import { type ObservationsTableRow } from "@/src/components/table/use-cases/observations";
 import { type TracesTableRow } from "@/src/components/table/use-cases/traces";
 import { Skeleton } from "@/src/components/ui/skeleton";
 import { type DatasetRunItemRowData } from "@/src/features/datasets/components/DatasetRunItemsTable";
 import { type DatasetRunRowData } from "@/src/features/datasets/components/DatasetRunsTable";
 import {
-  type ScoreAggregate,
-  type TableRowTypesWithIndividualScoreColumns,
   type CategoricalAggregate,
   type NumericAggregate,
-} from "@/src/features/scores/lib/types";
+  type ScoreAggregate,
+} from "@langfuse/shared";
 import { type PromptVersionTableRow } from "@/src/pages/project/[projectId]/prompts/[promptName]/metrics";
-import { type ScoreDataType, type ScoreSource } from "@langfuse/shared";
+import { type ScoreDataType } from "@langfuse/shared";
 import { type Row } from "@tanstack/react-table";
 import React from "react";
-
-type ScoreDetailColumnProps = {
-  key: string;
-  name: string;
-  dataType: ScoreDataType;
-  source: ScoreSource;
-};
+import {
+  type ScoreData,
+  type TableRowTypesWithIndividualScoreColumns,
+} from "@/src/features/scores/lib/types";
+import { type SessionTableRow } from "@/src/components/table/use-cases/sessions";
 
 const prefixScoreColKey = (
   key: string,
-  prefix: "Trace" | "Generation",
+  prefix: "Trace" | "Generation" | "Run-level" | "Aggregated",
 ): string => `${prefix}-${key}`;
 
 export const getScoreDataTypeIcon = (dataType: ScoreDataType): string => {
@@ -43,13 +40,14 @@ export const getScoreDataTypeIcon = (dataType: ScoreDataType): string => {
 const parseScoreColumn = <
   T extends
     | TracesTableRow
-    | GenerationsTableRow
+    | ObservationsTableRow
     | DatasetRunRowData
     | DatasetRunItemRowData
-    | PromptVersionTableRow,
+    | PromptVersionTableRow
+    | SessionTableRow,
 >(
-  col: ScoreDetailColumnProps,
-  prefix?: "Trace" | "Generation",
+  col: ScoreData,
+  prefix?: "Trace" | "Generation" | "Run-level" | "Aggregated",
 ): LangfuseColumnDef<T> => {
   const { key, name, source, dataType } = col;
 
@@ -73,9 +71,9 @@ const parseScoreColumn = <
 };
 
 export function verifyAndPrefixScoreDataAgainstKeys(
-  scoreKeys: ScoreDetailColumnProps[],
+  scoreKeys: ScoreData[],
   scoreData: ScoreAggregate,
-  prefix?: "Trace" | "Generation",
+  prefix?: "Trace" | "Generation" | "Run-level" | "Aggregated",
 ): ScoreAggregate {
   if (!Boolean(scoreKeys.length)) return {};
   let filteredScores: ScoreAggregate = {};
@@ -101,10 +99,10 @@ export const constructIndividualScoreColumns = <
   scoreColumnPrefix,
   cellsLoading = false,
 }: {
-  scoreColumnProps: ScoreDetailColumnProps[];
+  scoreColumnProps: ScoreData[];
   scoreColumnKey: keyof T & string;
   showAggregateViewOnly?: boolean;
-  scoreColumnPrefix?: "Trace" | "Generation";
+  scoreColumnPrefix?: "Trace" | "Generation" | "Run-level" | "Aggregated";
   cellsLoading?: boolean;
 }): LangfuseColumnDef<T>[] => {
   return scoreColumnProps.map((col) => {
@@ -134,6 +132,7 @@ export const constructIndividualScoreColumns = <
           <ScoresTableCell
             aggregate={value}
             showSingleValue={!showAggregateViewOnly}
+            hasMetadata={value.hasMetadata ?? false}
           />
         );
       },
@@ -141,10 +140,17 @@ export const constructIndividualScoreColumns = <
   });
 };
 
-export const getScoreGroupColumnProps = (isLoading: boolean) => ({
-  accessorKey: "scores",
-  header: "Scores",
-  id: "scores",
+export const getScoreGroupColumnProps = (
+  isLoading: boolean,
+  config = {
+    accessorKey: "scores",
+    header: "Scores",
+    id: "scores",
+  },
+) => ({
+  accessorKey: config.accessorKey,
+  header: config.header,
+  id: config.id,
   enableHiding: true,
   hideByDefault: true,
   cell: () => {

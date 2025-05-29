@@ -8,22 +8,28 @@ import {
   type LucideIcon,
   Settings,
   UsersIcon,
-  LibraryBig,
   TerminalIcon,
   Lightbulb,
   Grid2X2,
   Sparkle,
   FileJson,
+  Search,
+  Home,
 } from "lucide-react";
 import { type ReactNode } from "react";
 import { type Entitlement } from "@/src/features/entitlements/constants/entitlements";
-import { type UiCustomizationOption } from "@/src/ee/features/ui-customization/useUiCustomization";
 import { type User } from "next-auth";
 import { type OrganizationScope } from "@/src/features/rbac/constants/organizationAccessRights";
-import { UsageTracker } from "@/src/ee/features/billing/components/UsageTracker";
+import { SupportMenuDropdown } from "@/src/components/nav/support-menu-dropdown";
+import { SidebarMenuButton } from "@/src/components/ui/sidebar";
+import { useCommandMenu } from "@/src/features/command-k-menu/CommandMenuProvider";
+import { usePostHogClientCapture } from "@/src/features/posthog-analytics/usePostHogClientCapture";
+import { CloudStatusMenu } from "@/src/features/cloud-status-notification/components/CloudStatusMenu";
+import { type ProductModule } from "@/src/ee/features/ui-customization/productModuleSchema";
 
 export type Route = {
   title: string;
+  menuNode?: ReactNode;
   featureFlag?: Flag;
   label?: string | ReactNode;
   projectRbacScopes?: ProjectScope[]; // array treated as OR
@@ -34,7 +40,7 @@ export type Route = {
   bottom?: boolean; // bottom of the sidebar, only for first level routes
   newTab?: boolean; // open in new tab
   entitlements?: Entitlement[]; // entitlements required, array treated as OR
-  customizableHref?: UiCustomizationOption; // key of useUiCustomization object to use to replace the href
+  productModule?: ProductModule; // Product module this route belongs to. Used to show/hide modules via ui customization.
   show?: (p: {
     organization: User["organizations"][number] | undefined;
   }) => boolean;
@@ -42,19 +48,39 @@ export type Route = {
 
 export const ROUTES: Route[] = [
   {
+    title: "Go to...",
+    pathname: "", // Empty pathname since this is a dropdown
+    icon: Search,
+    menuNode: <CommandMenuTrigger />,
+  },
+  {
+    title: "Organizations",
+    pathname: "/",
+    icon: Grid2X2,
+    show: ({ organization }) => organization === undefined,
+  },
+  {
     title: "Projects",
     pathname: "/organization/[organizationId]",
     icon: Grid2X2,
   },
   {
-    title: "Dashboard",
+    title: "Home",
     pathname: `/project/[projectId]`,
+    icon: Home,
+  },
+  {
+    title: "Dashboards",
+    pathname: `/project/[projectId]/dashboards`,
     icon: LayoutDashboard,
+    entitlements: ["custom-dashboards"],
+    productModule: "dashboards",
   },
   {
     title: "Tracing",
     pathname: `/project/[projectId]/traces`,
     icon: ListTree,
+    productModule: "tracing",
     items: [
       {
         title: "Traces",
@@ -65,16 +91,12 @@ export const ROUTES: Route[] = [
         pathname: `/project/[projectId]/sessions`,
       },
       {
-        title: "Generations",
-        pathname: `/project/[projectId]/generations`,
+        title: "Observations",
+        pathname: `/project/[projectId]/observations`,
       },
       {
         title: "Scores",
         pathname: `/project/[projectId]/scores`,
-      },
-      {
-        title: "Models",
-        pathname: `/project/[projectId]/models`,
       },
     ],
   },
@@ -82,7 +104,7 @@ export const ROUTES: Route[] = [
     title: "Evaluation",
     icon: Lightbulb,
     pathname: `/project/[projectId]/annotation-queues`,
-    label: "Beta",
+    productModule: "evaluation",
     entitlements: ["annotation-queues", "model-based-evaluations"],
     projectRbacScopes: ["annotationQueues:read", "evalJob:read"],
     items: [
@@ -104,23 +126,27 @@ export const ROUTES: Route[] = [
     title: "Users",
     pathname: `/project/[projectId]/users`,
     icon: UsersIcon,
+    productModule: "tracing",
   },
   {
     title: "Prompts",
     pathname: "/project/[projectId]/prompts",
     icon: FileJson,
     projectRbacScopes: ["prompts:read"],
+    productModule: "prompt-management",
   },
   {
     title: "Playground",
     pathname: "/project/[projectId]/playground",
     icon: TerminalIcon,
+    productModule: "playground",
     entitlements: ["playground"],
   },
   {
     title: "Datasets",
     pathname: `/project/[projectId]/datasets`,
     icon: Database,
+    productModule: "datasets",
   },
   {
     title: "Upgrade",
@@ -130,7 +156,6 @@ export const ROUTES: Route[] = [
     entitlements: ["cloud-billing"],
     organizationRbacScope: "langfuseCloudBilling:CRUD",
     show: ({ organization }) => organization?.plan === "cloud:hobby",
-    label: <UsageTracker />,
   },
   {
     title: "Upgrade",
@@ -140,7 +165,12 @@ export const ROUTES: Route[] = [
     entitlements: ["cloud-billing"],
     organizationRbacScope: "langfuseCloudBilling:CRUD",
     show: ({ organization }) => organization?.plan === "cloud:hobby",
-    label: <UsageTracker />,
+  },
+  {
+    title: "Cloud Status",
+    bottom: true,
+    pathname: "",
+    menuNode: <CloudStatusMenu />,
   },
   {
     title: "Settings",
@@ -155,18 +185,38 @@ export const ROUTES: Route[] = [
     bottom: true,
   },
   {
-    title: "Docs",
-    pathname: "https://langfuse.com/docs",
-    icon: LibraryBig,
-    bottom: true,
-    newTab: true,
-    customizableHref: "documentationHref",
-  },
-  {
     title: "Support",
-    pathname: "/support",
     icon: LifeBuoy,
     bottom: true,
-    customizableHref: "supportHref",
+    pathname: "", // Empty pathname since this is a dropdown
+    menuNode: <SupportMenuDropdown />,
   },
 ];
+
+function CommandMenuTrigger() {
+  const { setOpen } = useCommandMenu();
+  const capture = usePostHogClientCapture();
+
+  return (
+    <SidebarMenuButton
+      onClick={() => {
+        capture("cmd_k_menu:opened", {
+          source: "main_navigation",
+        });
+        setOpen(true);
+      }}
+      className="whitespace-nowrap"
+    >
+      <Search className="h-4 w-4" />
+      Go to...
+      <kbd className="pointer-events-none ml-auto inline-flex h-5 select-none items-center gap-1 rounded-md border px-1.5 font-mono text-[10px]">
+        {navigator.userAgent.includes("Mac") ? (
+          <span className="text-[12px]">⌘</span>
+        ) : (
+          <span>Ctrl</span>
+        )}
+        <span>K</span>
+      </kbd>
+    </SidebarMenuButton>
+  );
+}

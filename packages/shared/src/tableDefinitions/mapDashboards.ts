@@ -1,6 +1,8 @@
-import { UiColumnMapping } from "./types";
+import { UiColumnMappings } from "./types";
 
-export const dashboardColumnDefinitions: UiColumnMapping[] = [
+// Make sure to update web/src/features/query/dashboardUiTableToViewMapping.ts if you make changes
+
+export const dashboardColumnDefinitions: UiColumnMappings = [
   {
     uiTableName: "Trace Name",
     uiTableId: "traceName",
@@ -21,9 +23,27 @@ export const dashboardColumnDefinitions: UiColumnMapping[] = [
   },
   {
     clickhouseTableName: "scores",
+    clickhouseSelect: "name",
+    uiTableId: "scoreName",
+    uiTableName: "Score Name",
+  },
+  {
+    clickhouseTableName: "scores",
     clickhouseSelect: "timestamp",
     uiTableId: "scoreTimestamp",
     uiTableName: "Score Timestamp",
+  },
+  {
+    clickhouseTableName: "scores",
+    clickhouseSelect: "source",
+    uiTableId: "scoreSource",
+    uiTableName: "Score Source",
+  },
+  {
+    clickhouseTableName: "scores",
+    clickhouseSelect: "data_type",
+    uiTableId: "scoreDataType",
+    uiTableName: "Scores Data Type",
   },
   {
     clickhouseTableName: "scores",
@@ -66,5 +86,17 @@ export const dashboardColumnDefinitions: UiColumnMapping[] = [
     clickhouseSelect: "t.version",
     uiTableId: "version",
     uiTableName: "Version",
+  },
+  {
+    clickhouseTableName: "observations",
+    clickhouseSelect: "provided_model_name",
+    uiTableId: "model",
+    uiTableName: "Model",
+  },
+  {
+    clickhouseTableName: "traces",
+    clickhouseSelect: "environment",
+    uiTableId: "environment",
+    uiTableName: "Environment",
   },
 ];

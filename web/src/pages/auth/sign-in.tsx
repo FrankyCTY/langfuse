@@ -14,7 +14,7 @@ import { env } from "@/src/env.mjs";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { FcGoogle } from "react-icons/fc";
 import { FaGithub, FaGitlab } from "react-icons/fa";
-import { SiOkta, SiAuth0, SiAmazoncognito } from "react-icons/si";
+import { SiOkta, SiAuth0, SiAmazoncognito, SiKeycloak } from "react-icons/si";
 import { TbBrandAzure, TbBrandOauth } from "react-icons/tb";
 import { signIn } from "next-auth/react";
 import Head from "next/head";
@@ -28,10 +28,11 @@ import { CloudRegionSwitch } from "@/src/features/auth/components/AuthCloudRegio
 import { PasswordInput } from "@/src/components/ui/password-input";
 import { Turnstile } from "@marsidev/react-turnstile";
 import { isAnySsoConfigured } from "@/src/ee/features/multi-tenant-sso/utils";
-import { Shield } from "lucide-react";
+import { Shield, Code } from "lucide-react";
 import { useRouter } from "next/router";
 import { captureException } from "@sentry/nextjs";
 import { usePostHogClientCapture } from "@/src/features/posthog-analytics/usePostHogClientCapture";
+import { openChat } from "@/src/features/support-chat/PlainChat";
 
 const credentialAuthForm = z.object({
   email: z.string().email(),
@@ -46,11 +47,21 @@ export type PageProps = {
     credentials: boolean;
     google: boolean;
     github: boolean;
+    githubEnterprise: boolean;
     gitlab: boolean;
     okta: boolean;
     azureAd: boolean;
     auth0: boolean;
     cognito: boolean;
+    keycloak: boolean;
+    workos:
+      | {
+          organizationId: string;
+        }
+      | {
+          connectionId: string;
+        }
+      | boolean;
     custom:
       | {
           name: string;
@@ -58,6 +69,7 @@ export type PageProps = {
       | false;
     sso: boolean;
   };
+  runningOnHuggingFaceSpaces: boolean;
   signUpDisabled: boolean;
 };
 
@@ -74,6 +86,10 @@ export const getServerSideProps: GetServerSideProps<PageProps> = async () => {
         github:
           env.AUTH_GITHUB_CLIENT_ID !== undefined &&
           env.AUTH_GITHUB_CLIENT_SECRET !== undefined,
+        githubEnterprise:
+          env.AUTH_GITHUB_ENTERPRISE_CLIENT_ID !== undefined &&
+          env.AUTH_GITHUB_ENTERPRISE_CLIENT_SECRET !== undefined &&
+          env.AUTH_GITHUB_ENTERPRISE_BASE_URL !== undefined,
         gitlab:
           env.AUTH_GITLAB_CLIENT_ID !== undefined &&
           env.AUTH_GITLAB_CLIENT_SECRET !== undefined,
@@ -94,6 +110,19 @@ export const getServerSideProps: GetServerSideProps<PageProps> = async () => {
           env.AUTH_COGNITO_CLIENT_ID !== undefined &&
           env.AUTH_COGNITO_CLIENT_SECRET !== undefined &&
           env.AUTH_COGNITO_ISSUER !== undefined,
+        keycloak:
+          env.AUTH_KEYCLOAK_CLIENT_ID !== undefined &&
+          env.AUTH_KEYCLOAK_CLIENT_SECRET !== undefined &&
+          env.AUTH_KEYCLOAK_ISSUER !== undefined,
+        workos:
+          env.AUTH_WORKOS_CLIENT_ID !== undefined &&
+          env.AUTH_WORKOS_CLIENT_SECRET !== undefined
+            ? env.AUTH_WORKOS_ORGANIZATION_ID !== undefined
+              ? { organizationId: env.AUTH_WORKOS_ORGANIZATION_ID }
+              : env.AUTH_WORKOS_CONNECTION_ID !== undefined
+                ? { connectionId: env.AUTH_WORKOS_CONNECTION_ID }
+                : true
+            : false,
         custom:
           env.AUTH_CUSTOM_CLIENT_ID !== undefined &&
           env.AUTH_CUSTOM_CLIENT_SECRET !== undefined &&
@@ -104,6 +133,10 @@ export const getServerSideProps: GetServerSideProps<PageProps> = async () => {
         sso,
       },
       signUpDisabled: env.AUTH_DISABLE_SIGNUP === "true",
+      runningOnHuggingFaceSpaces: env.NEXTAUTH_URL?.replace(
+        "/api/auth",
+        "",
+      ).endsWith(".hf.space"),
     },
   };
 };
@@ -165,6 +198,16 @@ export function SSOButtons({
               Github
             </Button>
           )}
+          {authProviders.githubEnterprise && (
+            <Button
+              onClick={() => handleSignIn("github-enterprise")}
+              variant="secondary"
+              loading={providerSigningIn === "github-enterprise"}
+            >
+              <FaGithub className="mr-3" size={18} />
+              Github Enterprise
+            </Button>
+          )}
           {authProviders.gitlab && (
             <Button
               onClick={() => handleSignIn("gitlab")}
@@ -215,6 +258,90 @@ export function SSOButtons({
               Cognito
             </Button>
           )}
+          {authProviders.keycloak && (
+            <Button
+              onClick={() => {
+                capture("sign_in:button_click", { provider: "keycloak" });
+                void signIn("keycloak");
+              }}
+              variant="secondary"
+            >
+              <SiKeycloak className="mr-3" size={18} />
+              Keycloak
+            </Button>
+          )}
+          {typeof authProviders.workos === "object" &&
+            "connectionId" in authProviders.workos && (
+              <Button
+                onClick={() => {
+                  capture("sign_in:button_click", { provider: "workos" });
+                  void signIn("workos", undefined, {
+                    connection: (
+                      authProviders.workos as { connectionId: string }
+                    ).connectionId,
+                  });
+                }}
+                variant="secondary"
+              >
+                <Code className="mr-3" size={18} />
+                WorkOS
+              </Button>
+            )}
+          {typeof authProviders.workos === "object" &&
+            "organizationId" in authProviders.workos && (
+              <Button
+                onClick={() => {
+                  capture("sign_in:button_click", { provider: "workos" });
+                  void signIn("workos", undefined, {
+                    organization: (
+                      authProviders.workos as { organizationId: string }
+                    ).organizationId,
+                  });
+                }}
+                variant="secondary"
+              >
+                <Code className="mr-3" size={18} />
+                WorkOS
+              </Button>
+            )}
+          {authProviders.workos === true && (
+            <>
+              <Button
+                onClick={() => {
+                  const organization = window.prompt(
+                    "Please enter your organization ID",
+                  );
+                  if (organization) {
+                    capture("sign_in:button_click", { provider: "workos" });
+                    void signIn("workos", undefined, {
+                      organization,
+                    });
+                  }
+                }}
+                variant="secondary"
+              >
+                <Code className="mr-3" size={18} />
+                WorkOS (organization)
+              </Button>
+              <Button
+                onClick={() => {
+                  const connection = window.prompt(
+                    "Please enter your connection ID",
+                  );
+                  if (connection) {
+                    capture("sign_in:button_click", { provider: "workos" });
+                    void signIn("workos", undefined, {
+                      connection,
+                    });
+                  }
+                }}
+                variant="secondary"
+              >
+                <Code className="mr-3" size={18} />
+                WorkOS (connection)
+              </Button>
+            </>
+          )}
           {authProviders.custom && (
             <Button
               onClick={() => handleSignIn("custom")}
@@ -231,16 +358,48 @@ export function SSOButtons({
   );
 }
 
+/**
+ * Redirect to HuggingFace Spaces auth page (/auth/hf-spaces) if running in an iframe on a HuggingFace host.
+ * The iframe detection needs to happen client-side since window/document objects are not available during SSR.
+ * @param runningOnHuggingFaceSpaces - whether the app is running on a HuggingFace spaces, needs to be checked server-side
+ */
+export function useHuggingFaceRedirect(runningOnHuggingFaceSpaces: boolean) {
+  const router = useRouter();
+
+  useEffect(() => {
+    const isInIframe = () => {
+      try {
+        return window.self !== window.top;
+      } catch (e) {
+        return true;
+      }
+    };
+
+    if (
+      runningOnHuggingFaceSpaces &&
+      typeof window !== "undefined" &&
+      isInIframe()
+    ) {
+      void router.push("/auth/hf-spaces");
+    }
+  }, [router, runningOnHuggingFaceSpaces]);
+}
+
 const signInErrors = [
   {
     code: "OAuthAccountNotLinked",
     description:
-      "Please sign in with the same provider that you used to create this account.",
+      "Please sign in with the same provider (e.g. Google, GitHub, Azure AD, etc.) that you used to create this account.",
   },
 ];
 
-export default function SignIn({ authProviders, signUpDisabled }: PageProps) {
+export default function SignIn({
+  authProviders,
+  signUpDisabled,
+  runningOnHuggingFaceSpaces,
+}: PageProps) {
   const router = useRouter();
+  useHuggingFaceRedirect(runningOnHuggingFaceSpaces);
 
   // handle NextAuth error codes: https://next-auth.js.org/configuration/pages#sign-in-page
   const nextAuthError =
@@ -367,16 +526,23 @@ export default function SignIn({ authProviders, signUpDisabled }: PageProps) {
         </div>
 
         {env.NEXT_PUBLIC_LANGFUSE_CLOUD_REGION !== undefined && (
-          <div className="-mb-10 mt-4 rounded-lg bg-card p-3 text-center text-sm sm:mx-auto sm:w-full sm:max-w-[480px] sm:rounded-lg sm:px-6">
+          <div className="-mb-4 mt-4 rounded-lg bg-card p-3 text-center text-sm sm:mx-auto sm:w-full sm:max-w-[480px] sm:rounded-lg sm:px-6">
             If you are experiencing issues signing in, please force refresh this
-            page (CMD + SHIFT + R) or clear your browser cache. We have made a
-            fix that is currently rolling out to all users.
+            page (CMD + SHIFT + R) or clear your browser cache. We are working
+            on a solution.{" "}
+            <span
+              className="cursor-pointer whitespace-nowrap text-xs font-medium text-primary-accent hover:text-hover-primary-accent"
+              onClick={() => openChat()}
+            >
+              (contact us)
+            </span>
           </div>
         )}
 
+        <CloudRegionSwitch />
+
         <div className="mt-14 bg-background px-6 py-10 shadow sm:mx-auto sm:w-full sm:max-w-[480px] sm:rounded-lg sm:px-10">
           <div className="space-y-6">
-            <CloudRegionSwitch />
             {authProviders.credentials ? (
               <Form {...credentialsForm}>
                 <form
@@ -407,6 +573,7 @@ export default function SignIn({ authProviders, signUpDisabled }: PageProps) {
                           <Link
                             href="/auth/reset-password"
                             className="ml-1 text-xs text-primary-accent hover:text-hover-primary-accent"
+                            tabIndex={-1}
                             title="What is this?"
                           >
                             (forgot password?)

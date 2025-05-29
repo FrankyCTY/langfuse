@@ -1,5 +1,4 @@
 import { z } from "zod";
-
 import { auditLog } from "@/src/features/audit-logs/auditLog";
 import { throwIfNoProjectAccess } from "@/src/features/rbac/utils/checkProjectAccess";
 import {
@@ -9,29 +8,34 @@ import {
 } from "@/src/server/api/trpc";
 import {
   filterAndValidateDbScoreList,
+  type FilterState,
   orderBy,
   paginationZod,
-  type SessionOptions,
+  type PrismaClient,
   singleFilter,
   timeFilter,
   tracesTableUiColumnDefinitions,
 } from "@langfuse/shared";
 import { Prisma } from "@langfuse/shared/src/db";
 import { TRPCError } from "@trpc/server";
-import { isClickhouseEligible } from "@/src/server/utils/checkClickhouseAccess";
 import Decimal from "decimal.js";
 import {
-  createSessionsAllQuery,
-  datetimeFilterToPrismaSql,
   traceException,
   getSessionsTable,
   getSessionsTableCount,
-  getTracesGroupedByUserIds,
   getTracesGroupedByTags,
-  getTracesForSession,
+  getTracesIdentifierForSession,
   getScoresForTraces,
   getCostForTraces,
+  getTracesGroupedByUsers,
+  getPublicSessionsFilter,
+  logger,
+  getSessionsWithMetrics,
+  hasAnySession,
+  getScoresForSessions,
 } from "@langfuse/shared/src/server";
+import { chunk } from "lodash";
+import { aggregateScores } from "@/src/features/scores/lib/aggregateScores";
 
 const SessionFilterOptions = z.object({
   projectId: z.string(), // Required for protectedProjectProcedure
@@ -40,91 +44,158 @@ const SessionFilterOptions = z.object({
   ...paginationZod,
 });
 
+const handleGetSessionById = async (input: {
+  sessionId: string;
+  projectId: string;
+  ctx: {
+    prisma: PrismaClient;
+  };
+}) => {
+  const postgresSession = await input.ctx.prisma.traceSession.findFirst({
+    where: {
+      id: input.sessionId,
+      projectId: input.projectId,
+    },
+  });
+
+  if (!postgresSession) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Session not found in project",
+    });
+  }
+
+  const clickhouseTraces = await getTracesIdentifierForSession(
+    input.projectId,
+    input.sessionId,
+  );
+
+  const chunks = chunk(clickhouseTraces, 500);
+
+  // in the below queries, take the lowest timestamp as a filter condition
+  // to improve performance
+  const [scores, costs] = await Promise.all([
+    Promise.all(
+      chunks.map((chunk) =>
+        getScoresForTraces({
+          projectId: input.projectId,
+          traceIds: chunk.map((t) => t.id),
+          timestamp: new Date(
+            Math.min(...chunk.map((t) => t.timestamp.getTime())),
+          ),
+        }),
+      ),
+    ).then((results) => results.flat()),
+    Promise.all(
+      chunks.map((chunk) =>
+        getCostForTraces(
+          input.projectId,
+          new Date(Math.min(...chunk.map((t) => t.timestamp.getTime()))),
+          chunk.map((t) => t.id),
+        ),
+      ),
+    ).then((results) =>
+      results.reduce((sum, cost) => (sum ?? 0) + (cost ?? 0), 0),
+    ),
+  ]);
+
+  const costData = costs;
+
+  const validatedScores = filterAndValidateDbScoreList({
+    scores,
+    onParseError: traceException,
+  });
+
+  return {
+    ...postgresSession,
+    traces: clickhouseTraces.map((t) => ({
+      ...t,
+      scores: validatedScores.filter((s) => s.traceId === t.id),
+    })),
+    totalCost: costData ?? 0,
+    users: [
+      ...new Set(
+        clickhouseTraces.map((t) => t.userId).filter((t) => t !== null),
+      ),
+    ],
+  };
+};
+
 export const sessionRouter = createTRPCRouter({
-  all: protectedProjectProcedure
+  hasAny: protectedProjectProcedure
     .input(
-      SessionFilterOptions.extend({
-        queryClickhouse: z.boolean().default(false),
+      z.object({
+        projectId: z.string(),
       }),
     )
+    .query(async ({ input }) => {
+      return await hasAnySession(input.projectId);
+    }),
+  all: protectedProjectProcedure
+    .input(SessionFilterOptions)
     .query(async ({ input, ctx }) => {
       try {
-        if (input.queryClickhouse && !isClickhouseEligible(ctx.session.user)) {
-          throw new TRPCError({
-            code: "UNAUTHORIZED",
-            message: "Not eligible to query clickhouse",
-          });
-        }
-
-        if (input.queryClickhouse) {
-          const sessions = await getSessionsTable({
-            projectId: input.projectId,
-            filter: input.filter ?? [],
-            orderBy: input.orderBy,
-            offset: input.page * input.limit,
-            limit: input.limit,
-          });
-
-          const prismaSessionInfo = await ctx.prisma.traceSession.findMany({
-            where: {
-              id: {
-                in: sessions.map((s) => s.session_id),
-              },
-              projectId: input.projectId,
-            },
-            select: {
-              id: true,
-              bookmarked: true,
-              public: true,
-            },
-          });
-          return {
-            sessions: sessions.map((s) => ({
-              id: s.session_id,
-              userIds: s.user_ids,
-              countTraces: s.trace_ids.length,
-              sessionDuration: Number(s.duration),
-              inputCost: new Decimal(s.session_input_cost),
-              outputCost: new Decimal(s.session_output_cost),
-              totalCost: new Decimal(s.session_total_cost),
-              promptTokens: Number(s.session_input_usage),
-              completionTokens: Number(s.session_output_usage),
-              totalTokens: Number(s.session_total_usage),
-              traceTags: s.trace_tags,
-              createdAt: s.min_timestamp,
-              bookmarked:
-                prismaSessionInfo.find((p) => p.id === s.session_id)
-                  ?.bookmarked ?? false,
-              public: prismaSessionInfo.find((p) => p.id === s.session_id)
-                ?.public,
-            })),
-          };
-        }
-
-        const sessions = await ctx.prisma.$queryRaw<
-          Array<{
-            id: string;
-            createdAt: Date;
-            bookmarked: boolean;
-            public: boolean;
-          }>
-        >(
-          createSessionsAllQuery(
-            Prisma.sql`
-              s.id,
-              s."created_at" AS "createdAt",
-              s.bookmarked,
-              s.public
-            `,
-            input,
-          ),
+        const finalFilter = await getPublicSessionsFilter(
+          input.projectId,
+          input.filter ?? [],
         );
+        const sessions = await getSessionsTable({
+          projectId: input.projectId,
+          filter: finalFilter,
+          orderBy: input.orderBy,
+          page: input.page,
+          limit: input.limit,
+        });
 
+        const scores = await getScoresForSessions({
+          projectId: ctx.session.projectId,
+          sessionIds: sessions.map((s) => s.session_id),
+          limit: 1000,
+          offset: 0,
+        });
+
+        const validatedScores = filterAndValidateDbScoreList({
+          scores,
+          onParseError: traceException,
+        });
+
+        const prismaSessionInfo = await ctx.prisma.traceSession.findMany({
+          where: {
+            id: {
+              in: sessions.map((s) => s.session_id),
+            },
+            projectId: input.projectId,
+          },
+          select: {
+            id: true,
+            bookmarked: true,
+            public: true,
+            environment: true,
+          },
+        });
         return {
-          sessions,
+          sessions: sessions.map((s) => ({
+            id: s.session_id,
+            userIds: s.user_ids,
+            countTraces: s.trace_count,
+            traceTags: s.trace_tags,
+            scores: aggregateScores(
+              validatedScores.filter(
+                (score) => score.sessionId === s.session_id,
+              ),
+            ),
+            createdAt: new Date(s.min_timestamp),
+            bookmarked:
+              prismaSessionInfo.find((p) => p.id === s.session_id)
+                ?.bookmarked ?? false,
+            public:
+              prismaSessionInfo.find((p) => p.id === s.session_id)?.public ??
+              false,
+            environment: s.trace_environment,
+          })),
         };
       } catch (e) {
-        console.error(e);
+        logger.error("Unable to call sessions.all", e);
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: "unable to get sessions",
@@ -132,63 +203,26 @@ export const sessionRouter = createTRPCRouter({
       }
     }),
   countAll: protectedProjectProcedure
-    .input(
-      SessionFilterOptions.extend({
-        queryClickhouse: z.boolean().default(false),
-      }),
-    )
-    .query(async ({ input, ctx }) => {
+    .input(SessionFilterOptions)
+    .query(async ({ input }) => {
       try {
-        if (input.queryClickhouse && !isClickhouseEligible(ctx.session.user)) {
-          throw new TRPCError({
-            code: "UNAUTHORIZED",
-            message: "Not eligible to query clickhouse",
-          });
-        }
-
-        if (input.queryClickhouse) {
-          const count = await getSessionsTableCount({
-            projectId: input.projectId,
-            filter: input.filter ?? [],
-            orderBy: input.orderBy,
-            offset: input.page * input.limit,
-            limit: input.limit,
-          });
-
-          return {
-            totalCount: count,
-          };
-        }
-
-        const inputForTotal: z.infer<typeof SessionFilterOptions> = {
-          filter: input.filter,
-          projectId: input.projectId,
-          orderBy: null,
-          limit: 1,
-          page: 0,
-        };
-
-        const totalCount = await ctx.prisma.$queryRaw<
-          Array<{
-            totalCount: number;
-          }>
-        >(
-          createSessionsAllQuery(
-            Prisma.sql`
-                count(*)::int as "totalCount"
-              `,
-            inputForTotal,
-            {
-              ignoreOrderBy: true,
-            },
-          ),
+        const finalFilter = await getPublicSessionsFilter(
+          input.projectId,
+          input.filter ?? [],
         );
+        const count = await getSessionsTableCount({
+          projectId: input.projectId,
+          filter: finalFilter,
+          orderBy: input.orderBy,
+          page: 0,
+          limit: 1,
+        });
 
         return {
-          totalCount: totalCount[0].totalCount,
+          totalCount: count,
         };
       } catch (e) {
-        console.error(e);
+        logger.error("Error in sessions.countAll", e);
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: "unable to get session count",
@@ -200,77 +234,63 @@ export const sessionRouter = createTRPCRouter({
       z.object({
         projectId: z.string(),
         sessionIds: z.array(z.string()),
-        queryClickhouse: z.boolean().default(false),
       }),
     )
     .query(async ({ input, ctx }) => {
       try {
-        if (input.queryClickhouse && !isClickhouseEligible(ctx.session.user)) {
-          throw new TRPCError({
-            code: "UNAUTHORIZED",
-            message: "Not eligible to query clickhouse",
-          });
-        }
-
         if (input.sessionIds.length === 0) return [];
-
-        if (input.queryClickhouse) {
-          return []; // initial endpoint returns all data from CH.
-        }
-
-        const inputForMetrics: z.infer<typeof SessionFilterOptions> = {
-          filter: [],
+        const finalFilter = await getPublicSessionsFilter(input.projectId, [
+          {
+            column: "id",
+            type: "stringOptions",
+            operator: "any of",
+            value: input.sessionIds,
+          },
+        ]);
+        const sessions = await getSessionsWithMetrics({
           projectId: input.projectId,
-          orderBy: null,
-          limit: 10000, // no limit
-          page: 0,
-        };
+          filter: finalFilter,
+        });
 
-        const metrics = await ctx.prisma.$queryRaw<
-          Array<{
-            id: string;
-            countTraces: number;
-            userIds: (string | null)[] | null;
-            sessionDuration: number | null;
-            inputCost: Decimal;
-            outputCost: Decimal;
-            totalCost: Decimal;
-            promptTokens: number;
-            completionTokens: number;
-            totalTokens: number;
-            traceTags: string[];
-          }>
-        >(
-          createSessionsAllQuery(
-            Prisma.sql`
-              s.id,
-              t."userIds",
-              t."countTraces",
-              o."sessionDuration",
-              o."totalCost" AS "totalCost",
-              o."inputCost" AS "inputCost",
-              o."outputCost" AS "outputCost",
-              o."promptTokens" AS "promptTokens",
-              o."completionTokens" AS "completionTokens",
-              o."totalTokens" AS "totalTokens",
-              t."tags" AS "traceTags"
-            `,
-            inputForMetrics,
-            {
-              ignoreOrderBy: true,
-              sessionIdList: input.sessionIds,
+        const prismaSessionInfo = await ctx.prisma.traceSession.findMany({
+          where: {
+            id: {
+              in: sessions.map((s) => s.session_id),
             },
-          ),
-        );
+            projectId: input.projectId,
+          },
+          select: {
+            id: true,
+            bookmarked: true,
+            public: true,
+          },
+        });
 
-        return metrics.map((row) => ({
-          ...row,
-          userIds: (row.userIds?.filter((t) => t !== null) ?? []) as string[],
-          traceTags: (row.traceTags?.filter((t) => t !== null) ??
-            []) as string[],
+        return sessions.map((s) => ({
+          id: s.session_id,
+          userIds: s.user_ids,
+          countTraces: s.trace_count,
+          traceTags: s.trace_tags,
+          createdAt: new Date(s.min_timestamp),
+          bookmarked:
+            prismaSessionInfo.find((p) => p.id === s.session_id)?.bookmarked ??
+            false,
+          public:
+            prismaSessionInfo.find((p) => p.id === s.session_id)?.public ??
+            false,
+          environment: s.trace_environment,
+          trace_count: Number(s.trace_count),
+          total_observations: Number(s.total_observations),
+          sessionDuration: Number(s.duration) / 1000,
+          inputCost: new Decimal(s.session_input_cost),
+          outputCost: new Decimal(s.session_output_cost),
+          totalCost: new Decimal(s.session_total_cost),
+          promptTokens: Number(s.session_input_usage),
+          completionTokens: Number(s.session_output_usage),
+          totalTokens: Number(s.session_total_usage),
         }));
       } catch (e) {
-        console.error(e);
+        logger.error("Error in sessions.metrics", e);
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: "unable to get session metrics",
@@ -282,99 +302,57 @@ export const sessionRouter = createTRPCRouter({
       z.object({
         projectId: z.string(),
         timestampFilter: timeFilter.optional(),
-        queryClickhouse: z.boolean().default(false),
       }),
     )
-    .query(async ({ input, ctx }) => {
+    .query(async ({ input }) => {
       try {
         const { timestampFilter } = input;
-
-        if (input.queryClickhouse && !isClickhouseEligible(ctx.session.user)) {
-          throw new TRPCError({
-            code: "UNAUTHORIZED",
-            message: "Not eligible to query clickhouse",
-          });
+        const columns = [
+          ...tracesTableUiColumnDefinitions,
+          {
+            uiTableName: "Created At",
+            uiTableId: "createdAt",
+            clickhouseTableName: "traces",
+            clickhouseSelect: "timestamp",
+          },
+        ];
+        const filter: FilterState = [
+          {
+            column: "sessionId",
+            operator: "is not null",
+            type: "null",
+            value: "",
+          },
+        ];
+        if (timestampFilter) {
+          filter.push(timestampFilter);
         }
-
-        if (input.queryClickhouse) {
-          const columns = [
-            ...tracesTableUiColumnDefinitions,
-            {
-              uiTableName: "Created At",
-              uiTableId: "createdAt",
-              clickhouseTableName: "traces",
-              clickhouseSelect: "timestamp",
-            },
-          ];
-          const [userIds, tags] = await Promise.all([
-            getTracesGroupedByUserIds({
-              projectId: input.projectId,
-              filter: timestampFilter ? [timestampFilter] : [],
-              sessionIdNullFilter: true,
-              columns,
-            }),
-            getTracesGroupedByTags({
-              projectId: input.projectId,
-              filter: timestampFilter ? [timestampFilter] : [],
-              sessionIdNullFilter: true,
-              columns,
-            }),
-          ]);
-
-          return {
-            userIds: userIds.map((row) => ({
-              value: row.user_id,
-            })),
-            tags: tags.map((row) => ({
-              value: row.value,
-            })),
-          };
-        }
-
-        const rawTimestampFilter =
-          timestampFilter && timestampFilter.type === "datetime"
-            ? datetimeFilterToPrismaSql(
-                "timestamp",
-                timestampFilter.operator,
-                timestampFilter.value,
-              )
-            : Prisma.empty;
         const [userIds, tags] = await Promise.all([
-          ctx.prisma.$queryRaw<Array<{ value: string }>>(Prisma.sql`
-            SELECT 
-              traces.user_id AS value
-            FROM traces
-            WHERE 
-              traces.session_id IS NOT NULL
-              AND traces.user_id IS NOT NULL
-              AND traces.project_id = ${input.projectId} ${rawTimestampFilter}
-            GROUP BY traces.user_id 
-            ORDER BY traces.user_id ASC
-            LIMIT 1000;
-          `),
-          ctx.prisma.$queryRaw<
-            Array<{
-              value: string;
-            }>
-          >(Prisma.sql`
-            SELECT DISTINCT tag AS value
-            FROM traces t
-            JOIN observations o ON o.trace_id = t.id,
-            UNNEST(t.tags) AS tag
-            WHERE o.type = 'GENERATION'
-              AND o.project_id = ${input.projectId}
-              AND t.project_id = ${input.projectId} ${rawTimestampFilter}
-            LIMIT 1000;
-          `),
+          getTracesGroupedByUsers(
+            input.projectId,
+            filter,
+            undefined,
+            1000,
+            0,
+            columns,
+          ),
+          getTracesGroupedByTags({
+            projectId: input.projectId,
+            filter,
+            columns,
+          }),
         ]);
 
-        const res: SessionOptions = {
-          userIds: userIds,
-          tags: tags,
+        return {
+          userIds: userIds.map((row) => ({
+            value: row.user,
+          })),
+          tags: tags.map((row) => ({
+            value: row.value,
+          })),
         };
-        return res;
       } catch (e) {
-        console.error(e);
+        logger.error("Unable to get sessions.filterOptions", e);
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: "unable to get session filter options",
@@ -386,143 +364,44 @@ export const sessionRouter = createTRPCRouter({
       z.object({
         projectId: z.string(),
         sessionId: z.string(),
-        queryClickhouse: z.boolean().default(false),
       }),
     )
     .query(async ({ input, ctx }) => {
-      try {
-        if (input.queryClickhouse && !isClickhouseEligible(ctx.session.user)) {
-          throw new TRPCError({
-            code: "UNAUTHORIZED",
-            message: "Not eligible to query clickhouse",
-          });
-        }
+      return await handleGetSessionById({
+        sessionId: input.sessionId,
+        projectId: input.projectId,
+        ctx,
+      });
+    }),
+  byIdWithScores: protectedGetSessionProcedure
+    .input(
+      z.object({
+        sessionId: z.string(), // used for security check
+        projectId: z.string(), // used for security check
+      }),
+    )
+    .query(async ({ input, ctx }) => {
+      const [scores, session] = await Promise.all([
+        getScoresForSessions({
+          projectId: input.projectId,
+          sessionIds: [input.sessionId],
+        }),
+        handleGetSessionById({
+          sessionId: input.sessionId,
+          projectId: input.projectId,
+          ctx,
+        }),
+      ]);
 
-        if (input.queryClickhouse) {
-          const postgresSession = await ctx.prisma.traceSession.findFirst({
-            where: {
-              id: input.sessionId,
-              projectId: input.projectId,
-            },
-          });
+      const validatedScores = filterAndValidateDbScoreList({
+        scores,
+        onParseError: traceException,
+      });
 
-          if (!postgresSession) {
-            throw new TRPCError({
-              code: "NOT_FOUND",
-              message: "Session not found in project",
-            });
-          }
-
-          const clickhouseTraces = await getTracesForSession(
-            input.projectId,
-            input.sessionId,
-          );
-
-          const [scores, costData] = await Promise.all([
-            getScoresForTraces(
-              input.projectId,
-              clickhouseTraces.map((t) => t.id),
-            ),
-            getCostForTraces(
-              input.projectId,
-              clickhouseTraces.map((t) => t.id),
-            ),
-          ]);
-
-          const validatedScores = filterAndValidateDbScoreList(
-            scores,
-            traceException,
-          );
-
-          return {
-            ...postgresSession,
-            traces: clickhouseTraces.map((t) => ({
-              ...t,
-              scores: validatedScores.filter((s) => s.traceId === t.id),
-            })),
-            totalCost: costData,
-            users: [
-              ...new Set(
-                clickhouseTraces.map((t) => t.userId).filter((t) => t !== null),
-              ),
-            ],
-          };
-        }
-
-        const session = await ctx.prisma.traceSession.findFirst({
-          where: {
-            id: input.sessionId,
-            projectId: input.projectId,
-          },
-          include: {
-            traces: {
-              orderBy: {
-                timestamp: "asc",
-              },
-              select: {
-                id: true,
-                userId: true,
-                name: true,
-                timestamp: true,
-              },
-            },
-          },
-        });
-        if (!session) {
-          throw new TRPCError({
-            code: "NOT_FOUND",
-            message: "Session not found in project",
-          });
-        }
-
-        const totalCostQuery = Prisma.sql`
-          SELECT
-            SUM(COALESCE(o."calculated_total_cost", 0)) AS "totalCost"
-          FROM observations_view o
-          JOIN traces t ON t.id = o.trace_id
-          WHERE
-            t."session_id" = ${input.sessionId}
-            AND t."project_id" = ${input.projectId}
-        `;
-
-        const [scores, costData] = await Promise.all([
-          ctx.prisma.score.findMany({
-            where: {
-              traceId: {
-                in: session.traces.map((t) => t.id),
-              },
-              projectId: input.projectId,
-            },
-          }),
-          // costData
-          ctx.prisma.$queryRaw<Array<{ totalCost: number }>>(totalCostQuery),
-        ]);
-
-        const validatedScores = filterAndValidateDbScoreList(
-          scores,
-          traceException,
-        );
-
-        return {
-          ...session,
-          traces: session.traces.map((t) => ({
-            ...t,
-            scores: validatedScores.filter((s) => s.traceId === t.id),
-          })),
-          totalCost: costData[0].totalCost ?? 0,
-          users: [
-            ...new Set(
-              session.traces.map((t) => t.userId).filter((t) => t !== null),
-            ),
-          ],
-        };
-      } catch (e) {
-        console.error(e);
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: "unable to get session",
-        });
-      }
+      return {
+        ...session,
+        scores: validatedScores,
+      };
     }),
   bookmark: protectedProjectProcedure
     .input(
@@ -561,7 +440,7 @@ export const sessionRouter = createTRPCRouter({
         });
         return session;
       } catch (error) {
-        console.error(error);
+        logger.error("Unable to call sessions.bookmark", error);
         if (
           error instanceof Prisma.PrismaClientKnownRequestError &&
           error.code === "P2025" // Record to update not found
@@ -611,7 +490,7 @@ export const sessionRouter = createTRPCRouter({
           },
         });
       } catch (e) {
-        console.error(e);
+        logger.error("Unable to call sessions.publish", e);
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: "unable to publish session",

@@ -1,11 +1,12 @@
 import {
   type ModelUsageUnit as PrismaModelUsageUnit,
   paginationMetaResponseZod,
-  paginationZod,
   type Model as PrismaModel,
   jsonSchema,
+  publicApiPaginationZod,
 } from "@langfuse/shared";
 import { z } from "zod";
+import { type Decimal } from "decimal.js";
 
 /**
  * Objects
@@ -29,11 +30,12 @@ const APIModelDefinition = z
     inputPrice: z.number().nonnegative().nullable(),
     outputPrice: z.number().nonnegative().nullable(),
     totalPrice: z.number().nonnegative().nullable(),
-    unit: APIModelUsageUnit,
+    unit: APIModelUsageUnit.nullish(),
     tokenizerId: z.string().nullable(),
     tokenizerConfig: z.any(), // Assuming Prisma.JsonValue is any type
     isLangfuseManaged: z.boolean(),
     createdAt: z.coerce.date(),
+    prices: z.record(z.string(), z.object({ price: z.number() })),
   })
   .strict();
 
@@ -49,8 +51,11 @@ export function prismaToApiModelDefinition({
   unit,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   updatedAt,
+  Price,
   ...model
-}: PrismaModel): z.infer<typeof APIModelDefinition> {
+}: PrismaModel & { Price: { usageType: string; price: Decimal }[] }): z.infer<
+  typeof APIModelDefinition
+> {
   return {
     ...model,
     unit: unit as PrismaModelUsageUnit,
@@ -58,6 +63,14 @@ export function prismaToApiModelDefinition({
     outputPrice: outputPrice?.toNumber() ?? null,
     totalPrice: totalPrice?.toNumber() ?? null,
     isLangfuseManaged: !Boolean(projectId),
+    prices: Price.reduce(
+      (acc, p) => {
+        acc[p.usageType] = { price: p.price.toNumber() };
+
+        return acc;
+      },
+      {} as z.infer<typeof APIModelDefinition>["prices"],
+    ),
   };
 }
 
@@ -67,7 +80,7 @@ export function prismaToApiModelDefinition({
 
 // GET /models
 export const GetModelsV1Query = z.object({
-  ...paginationZod,
+  ...publicApiPaginationZod,
 });
 export const GetModelsV1Response = z
   .object({
