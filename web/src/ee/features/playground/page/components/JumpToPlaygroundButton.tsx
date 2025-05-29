@@ -95,6 +95,7 @@ export const JumpToPlaygroundButton: React.FC<JumpToPlaygroundButtonProps> = (
     if (props.source === "prompt") {
       setCapturedState(parsePrompt(props.prompt));
     } else if (props.source === "generation") {
+      // TODO: Parse generation data and perhaps send to next page forms
       setCapturedState(parseGeneration(props.generation, modelToProviderMap));
     }
   }, [props, modelToProviderMap]);
@@ -143,7 +144,20 @@ export const JumpToPlaygroundButton: React.FC<JumpToPlaygroundButtonProps> = (
 
 const ParsedChatMessageListSchema = z.array(
   z.object({
-    role: z.nativeEnum(ChatMessageRole),
+    // TODO: Customize so that this is case insensitive
+    // role: z.nativeEnum(ChatMessageRole),
+    role: z
+      .string()
+      .transform((val) => val.toLowerCase())
+      .refine(
+        (val) =>
+          Object.values(ChatMessageRole)
+            .map((v) => v.toLowerCase())
+            .includes(val),
+        {
+          message: "Invalid role value",
+        },
+      ),
     content: z.union([
       z.string(),
       z
