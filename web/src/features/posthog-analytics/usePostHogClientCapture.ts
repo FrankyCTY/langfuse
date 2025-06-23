@@ -194,7 +194,8 @@ type EventName = {
 }[keyof typeof events];
 
 export const usePostHogClientCapture = () => {
-  const posthog = usePostHog();
+  // FIXME: Disable posthog
+  // const posthog = usePostHog();
 
   // wrapped posthog.capture function that only allows events that are in the allowlist
   function capture(
@@ -202,7 +203,7 @@ export const usePostHogClientCapture = () => {
     properties?: Record<string, any> | null,
     options?: CaptureOptions,
   ): CaptureResult | void {
-    return posthog.capture(eventName, properties, options);
+    return;
   }
 
   return capture;

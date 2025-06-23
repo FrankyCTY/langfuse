@@ -7,7 +7,7 @@ import {
 import { type z } from "zod/v4";
 
 export const pruneDatabase = async () => {
-  if (!env.DATABASE_URL.includes("localhost:5432")) {
+  if (!env.DATABASE_URL.includes("localhost:5400")) {
     throw new Error("You cannot prune database unless running on localhost.");
   }
 

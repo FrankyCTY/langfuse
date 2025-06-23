@@ -27,6 +27,7 @@ export const usePlan = (): Plan | undefined => {
     const org = session.data?.user?.organizations.find(
       (org) => org.id === organizationId,
     );
+    console.log("-->", org);
     return org?.plan ?? "oss";
   }
 

@@ -1,20 +1,20 @@
-import lodash from "lodash";
-import { z } from "zod/v4";
+import lodash from 'lodash';
+import { z } from 'zod/v4';
 
-import { NonEmptyString, jsonSchema } from "../../utils/zod";
-import { ModelUsageUnit } from "../../constants";
-import { ScoreSourceType } from "../../domain";
-import { applyScoreValidation } from "../../utils/scores";
+import { NonEmptyString, jsonSchema } from '../../utils/zod';
+import { ModelUsageUnit } from '../../constants';
+import { ScoreSourceType } from '../../domain';
+import { applyScoreValidation } from '../../utils/scores';
 
 export const idSchema = z
   .string()
   .min(1)
   .max(800) // AWS S3 allows for 1024 bytes for object keys and we need enough room to construct the entire key/path. https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html
-  .refine((id) => !id.includes("\r"), {
-    message: "ID cannot contain carriage return characters",
+  .refine((id) => !id.includes('\r'), {
+    message: 'ID cannot contain carriage return characters',
   });
 
-const ObservationLevel = z.enum(["DEBUG", "DEFAULT", "WARNING", "ERROR"]);
+const ObservationLevel = z.enum(['DEBUG', 'DEFAULT', 'WARNING', 'ERROR']);
 
 export const Usage = z.object({
   input: z.number().int().nullish(),
@@ -48,7 +48,7 @@ export const usage = MixedUsage.nullish()
       return null;
     }
     // if we get the openai format, we default to TOKENS unit
-    if ("promptTokens" in v || "completionTokens" in v || "totalTokens" in v) {
+    if ('promptTokens' in v || 'completionTokens' in v || 'totalTokens' in v) {
       return {
         input: v.promptTokens,
         output: v.completionTokens,
@@ -195,12 +195,12 @@ export const UsageDetails = z
 
 export const EnvironmentName = z
   .string()
-  .max(40, "Maximum length is 40 characters")
+  .max(40, 'Maximum length is 40 characters')
   .regex(
     /^(?!langfuse)[a-z0-9-_]+$/,
     "Only alphanumeric lower case characters, hyphens, and underscores are allowed, and it must not start with 'langfuse'",
   )
-  .default("default");
+  .default('default');
 
 // Using z.any instead of jsonSchema for input/output as we saw huge CPU overhead for large numeric arrays.
 // With this setup parsing should be more lightweight and doesn't block other requests.
@@ -274,13 +274,19 @@ export const CreateGenerationBody = CreateSpanBody.extend({
   costDetails: CostDetails,
   promptName: z.string().nullish(),
   promptVersion: z.number().int().nullish(),
-}).refine((value) => {
-  // ensure that either promptName and promptVersion are set, or none
+}).refine(
+  (value) => {
+    // ensure that either promptName and promptVersion are set, or none
 
-  if (!value.promptName && !value.promptVersion) return true;
-  if (value.promptName && value.promptVersion) return true;
-  return false;
-});
+    if (!value.promptName && !value.promptVersion) return true;
+    if (value.promptName && value.promptVersion) return true;
+    return false;
+  },
+  {
+    message:
+      "Either both 'promptName' and 'promptVersion' must be provided, or neither.",
+  },
+);
 
 export const UpdateGenerationBody = UpdateSpanBody.extend({
   completionStartTime: stringDateTime,
@@ -304,13 +310,19 @@ export const UpdateGenerationBody = UpdateSpanBody.extend({
   costDetails: CostDetails,
   promptName: z.string().nullish(),
   promptVersion: z.number().int().nullish(),
-}).refine((value) => {
-  // ensure that either promptName and promptVersion are set, or none
+}).refine(
+  (value) => {
+    // ensure that either promptName and promptVersion are set, or none
 
-  if (!value.promptName && !value.promptVersion) return true;
-  if (value.promptName && value.promptVersion) return true;
-  return false;
-});
+    if (!value.promptName && !value.promptVersion) return true;
+    if (value.promptName && value.promptVersion) return true;
+    return false;
+  },
+  {
+    message:
+      "Either both 'promptName' and 'promptVersion' must be provided, or neither.",
+  },
+);
 
 const BaseScoreBody = z.object({
   id: idSchema.nullish(),
@@ -323,26 +335,26 @@ const BaseScoreBody = z.object({
   comment: z.string().nullish(),
   metadata: jsonSchema.nullish(),
   source: z
-    .enum(["API", "EVAL", "ANNOTATION"])
-    .default("API" as ScoreSourceType),
+    .enum(['API', 'EVAL', 'ANNOTATION'])
+    .default('API' as ScoreSourceType),
 });
 
 /**
  * ScoreBody exactly mirrors `PostScoresBody` in the public API. Please refer there for source of truth.
  */
 export const ScoreBody = applyScoreValidation(
-  z.discriminatedUnion("dataType", [
+  z.discriminatedUnion('dataType', [
     BaseScoreBody.merge(
       z.object({
         value: z.number(),
-        dataType: z.literal("NUMERIC"),
+        dataType: z.literal('NUMERIC'),
         configId: z.string().nullish(),
       }),
     ),
     BaseScoreBody.merge(
       z.object({
         value: z.string(),
-        dataType: z.literal("CATEGORICAL"),
+        dataType: z.literal('CATEGORICAL'),
         configId: z.string().nullish(),
       }),
     ),
@@ -350,9 +362,9 @@ export const ScoreBody = applyScoreValidation(
       z.object({
         value: z.number().refine((value) => value === 0 || value === 1, {
           message:
-            "Value must be a number equal to either 0 or 1 for data type BOOLEAN",
+            'Value must be a number equal to either 0 or 1 for data type BOOLEAN',
         }),
-        dataType: z.literal("BOOLEAN"),
+        dataType: z.literal('BOOLEAN'),
         configId: z.string().nullish(),
       }),
     ),
@@ -446,7 +458,7 @@ export const LegacyGenerationPatchSchema = z.object({
 export const LegacyObservationBody = z.object({
   id: idSchema.nullish(),
   traceId: idSchema.nullish(),
-  type: z.enum(["GENERATION", "SPAN", "EVENT"]),
+  type: z.enum(['GENERATION', 'SPAN', 'EVENT']),
   name: z.string().nullish(),
   startTime: stringDateTime,
   endTime: stringDateTime,
@@ -476,17 +488,17 @@ export const SdkLogEvent = z.object({
 });
 
 export const eventTypes = {
-  TRACE_CREATE: "trace-create",
-  SCORE_CREATE: "score-create",
-  EVENT_CREATE: "event-create",
-  SPAN_CREATE: "span-create",
-  SPAN_UPDATE: "span-update",
-  GENERATION_CREATE: "generation-create",
-  GENERATION_UPDATE: "generation-update",
-  SDK_LOG: "sdk-log",
+  TRACE_CREATE: 'trace-create',
+  SCORE_CREATE: 'score-create',
+  EVENT_CREATE: 'event-create',
+  SPAN_CREATE: 'span-create',
+  SPAN_UPDATE: 'span-update',
+  GENERATION_CREATE: 'generation-create',
+  GENERATION_UPDATE: 'generation-update',
+  SDK_LOG: 'sdk-log',
   // LEGACY, only required for backwards compatibility
-  OBSERVATION_CREATE: "observation-create",
-  OBSERVATION_UPDATE: "observation-update",
+  OBSERVATION_CREATE: 'observation-create',
+  OBSERVATION_UPDATE: 'observation-update',
 } as const;
 
 const base = z.object({
@@ -538,7 +550,7 @@ export const legacyObservationUpdateEvent = base.extend({
   body: LegacyObservationBody,
 });
 
-export const ingestionEvent = z.discriminatedUnion("type", [
+export const ingestionEvent = z.discriminatedUnion('type', [
   traceEvent,
   scoreEvent,
   eventCreateEvent,

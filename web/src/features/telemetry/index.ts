@@ -1,5 +1,5 @@
 import { VERSION } from "@/src/constants";
-import { ServerPosthog } from "@/src/features/posthog-analytics/ServerPosthog";
+// import { ServerPosthog } from "@/src/features/posthog-analytics/ServerPosthog";
 import { Prisma, prisma } from "@langfuse/shared/src/db";
 import { v4 as uuidv4 } from "uuid";
 import {
@@ -38,11 +38,11 @@ export async function telemetry() {
       const { jobStartedAt, lastRun, clientId } = job;
 
       // Run telemetry job
-      await posthogTelemetry({
-        startTimeframe: lastRun,
-        endTimeframe: jobStartedAt,
-        clientId,
-      });
+      // await posthogTelemetry({
+      //   startTimeframe: lastRun,
+      //   endTimeframe: jobStartedAt,
+      //   clientId,
+      // });
 
       // Update cron_jobs table
       await prisma.cronJobs.update({
@@ -196,57 +196,57 @@ async function posthogTelemetry({
       0,
     );
 
-    // Count datasets
-    const countDatasets = await prisma.dataset.count({
-      where: {
-        createdAt: {
-          gte: startTimeframe?.toISOString(),
-          lt: endTimeframe.toISOString(),
-        },
-      },
-    });
+    //     // Count datasets
+    //     const countDatasets = await prisma.dataset.count({
+    //       where: {
+    //         createdAt: {
+    //           gte: startTimeframe?.toISOString(),
+    //           lt: endTimeframe.toISOString(),
+    //         },
+    //       },
+    //     });
 
-    // Count dataset items
-    const countDatasetItems = await prisma.datasetItem.count({
-      where: {
-        createdAt: {
-          gte: startTimeframe?.toISOString(),
-          lt: endTimeframe.toISOString(),
-        },
-      },
-    });
+    //     // Count dataset items
+    //     const countDatasetItems = await prisma.datasetItem.count({
+    //       where: {
+    //         createdAt: {
+    //           gte: startTimeframe?.toISOString(),
+    //           lt: endTimeframe.toISOString(),
+    //         },
+    //       },
+    //     });
 
-    // Count dataset runs
-    const countDatasetRuns = await prisma.datasetRuns.count({
-      where: {
-        createdAt: {
-          gte: startTimeframe?.toISOString(),
-          lt: endTimeframe.toISOString(),
-        },
-      },
-    });
+    //     // Count dataset runs
+    //     const countDatasetRuns = await prisma.datasetRuns.count({
+    //       where: {
+    //         createdAt: {
+    //           gte: startTimeframe?.toISOString(),
+    //           lt: endTimeframe.toISOString(),
+    //         },
+    //       },
+    //     });
 
-    // Count dataset run items
-    const countDatasetRunItems = await prisma.datasetRunItems.count({
-      where: {
-        createdAt: {
-          gte: startTimeframe?.toISOString(),
-          lt: endTimeframe.toISOString(),
-        },
-      },
-    });
+    //     // Count dataset run items
+    //     const countDatasetRunItems = await prisma.datasetRunItems.count({
+    //       where: {
+    //         createdAt: {
+    //           gte: startTimeframe?.toISOString(),
+    //           lt: endTimeframe.toISOString(),
+    //         },
+    //       },
+    //     });
 
-    // Domains (no PII)
-    const domains = await prisma.$queryRaw<Array<{ domain: string }>>`
-      SELECT
-        substring(email FROM position('@' in email) + 1) as domain,
-        count(id)::int as "userCount"
-      FROM users
-      WHERE email ILIKE '%@%'
-      GROUP BY 1
-      ORDER BY count(id) desc
-      LIMIT 30
-    `;
+    //     // Domains (no PII)
+    //     const domains = await prisma.$queryRaw<Array<{ domain: string }>>`
+    //       SELECT
+    //         substring(email FROM position('@' in email) + 1) as domain,
+    //         count(id)::int as "userCount"
+    //       FROM users
+    //       WHERE email ILIKE '%@%'
+    //       GROUP BY 1
+    //       ORDER BY count(id) desc
+    //       LIMIT 30
+    //     `;
 
     posthog.capture({
       distinctId: "docker:" + clientId,
